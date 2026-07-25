@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { parseRequest } from '@/lib/request';
 import { badRequest, json, notFound, serverError, unauthorized } from '@/lib/response';
 import { isTruleafModerationEnabled, isTruleafWebsite } from '@/lib/truleaf/config';
+import { TRULEAF_MODERATION_TARGET_LIMIT } from '@/lib/truleaf/constants';
 import {
   type ModerationSource,
   type ModerationStatusResponse,
@@ -47,6 +48,17 @@ const actionSchema = z
       context.addIssue({
         code: 'custom',
         message: 'Select at least one observed network',
+        path: ['networkIds'],
+      });
+    }
+
+    const selectedTargetCount =
+      new Set(value.networkIds).size + (value.targetTypes.includes('account') ? 1 : 0);
+
+    if (selectedTargetCount > TRULEAF_MODERATION_TARGET_LIMIT) {
+      context.addIssue({
+        code: 'custom',
+        message: `Select at most ${TRULEAF_MODERATION_TARGET_LIMIT} targets`,
         path: ['networkIds'],
       });
     }
@@ -125,6 +137,27 @@ function getAccountDisplayValue(status: ModerationStatusResponse) {
   return getAccountStatus(status)?.displayValue;
 }
 
+async function getTargetStatus(
+  targets: ModerationTarget[],
+  source: ModerationSource,
+): Promise<ModerationStatusResponse> {
+  const combined: ModerationStatusResponse = { targets: [] };
+
+  for (let index = 0; index < targets.length; index += TRULEAF_MODERATION_TARGET_LIMIT) {
+    const status = await requestTruleafModeration({
+      path: '/api/v1/internal/moderation/status',
+      body: {
+        targets: targets.slice(index, index + TRULEAF_MODERATION_TARGET_LIMIT),
+        source,
+      },
+      schema: moderationStatusSchema,
+    });
+    combined.targets.push(...status.targets);
+  }
+
+  return combined;
+}
+
 export async function GET(request: Request, context: RouteContext) {
   try {
     const resolved = await resolveContext(request, context);
@@ -141,13 +174,7 @@ export async function GET(request: Request, context: RouteContext) {
       networks.map(({ id }) => id),
       identityProof,
     );
-    const status = targets.length
-      ? await requestTruleafModeration({
-          path: '/api/v1/internal/moderation/status',
-          body: { targets, source },
-          schema: moderationStatusSchema,
-        })
-      : { targets: [] };
+    const status = targets.length ? await getTargetStatus(targets, source) : { targets: [] };
 
     return json({
       account: session.distinctId
@@ -196,12 +223,14 @@ export async function POST(request: Request, context: RouteContext) {
       return badRequest({ message: 'None of the selected target types are available' });
     }
 
-    if (targetTypes.includes('account')) {
-      const status = await requestTruleafModeration({
-        path: '/api/v1/internal/moderation/status',
-        body: { targets, source },
-        schema: moderationStatusSchema,
+    if (targets.length > TRULEAF_MODERATION_TARGET_LIMIT) {
+      return badRequest({
+        message: `Select at most ${TRULEAF_MODERATION_TARGET_LIMIT} targets`,
       });
+    }
+
+    if (targetTypes.includes('account')) {
+      const status = await getTargetStatus(targets, source);
 
       const accountStatus = getAccountStatus(status);
       const permitted =

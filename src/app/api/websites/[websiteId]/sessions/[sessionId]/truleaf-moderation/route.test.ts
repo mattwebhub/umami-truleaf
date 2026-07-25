@@ -43,6 +43,18 @@ const context = {
   params: Promise.resolve({ websiteId: 'website-1', sessionId: 'session-1' }),
 };
 
+function createNetwork(index: number) {
+  return {
+    id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+    address: `198.51.100.${index}`,
+    maskedAddress: '198.51.x.x',
+    addressFamily: 4,
+    firstSeenAt: new Date('2026-07-23T10:00:00Z'),
+    lastSeenAt: new Date('2026-07-24T10:00:00Z'),
+    expiresAt: new Date('2026-08-23T10:00:00Z'),
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   canUpdateWebsiteMock.mockResolvedValue(true);
@@ -164,6 +176,45 @@ test('GET keeps anonymous IP moderation available for a forged distinctId withou
   });
 });
 
+test('GET chunks more than ten retained targets and combines their status', async () => {
+  parseRequestMock.mockResolvedValue({ auth: { user: { id: 'operator-1' } } });
+  getNetworksMock.mockResolvedValue(
+    Array.from({ length: 11 }, (_, index) => createNetwork(index + 1)),
+  );
+  requestServiceMock.mockImplementation(async ({ body }: any) => ({
+    targets: body.targets.map((target: any) =>
+      target.type === 'account'
+        ? {
+            type: 'account',
+            targetId: 'opaque-account',
+            displayValue: 'user…1234',
+            banned: false,
+            canBan: true,
+            canUnban: false,
+          }
+        : {
+            type: 'ip',
+            targetId: `opaque-${target.value}`,
+            displayValue: '198.51.x.x',
+            banned: false,
+          },
+    ),
+  }));
+
+  const response = await GET(new Request('http://localhost/moderation'), context);
+  const body = await response.json();
+
+  expect(response.status).toBe(200);
+  expect(body.networks).toHaveLength(11);
+  expect(body.status.targets).toHaveLength(12);
+  expect(requestServiceMock).toHaveBeenCalledTimes(2);
+  expect(
+    requestServiceMock.mock.calls.every(
+      ([request]) => (request.body as { targets: unknown[] }).targets.length <= 10,
+    ),
+  ).toBe(true);
+});
+
 test('POST resolves only explicitly selected opaque network IDs', async () => {
   parseRequestMock.mockResolvedValue({
     auth: { user: { id: 'operator-1' } },
@@ -201,6 +252,80 @@ test('POST resolves only explicitly selected opaque network IDs', async () => {
     targets: [{ type: 'ip', value: '198.51.100.20' }],
   });
   expect(JSON.stringify(requestServiceMock.mock.calls[0][0].body)).not.toContain('192.0.2.10');
+});
+
+test('POST accepts one account plus nine explicitly selected networks', async () => {
+  const networks = Array.from({ length: 9 }, (_, index) => createNetwork(index + 1));
+  getNetworksMock.mockResolvedValue(networks);
+  parseRequestMock.mockResolvedValue({
+    auth: { user: { id: 'operator-1' } },
+    body: {
+      requestId: '33333333-3333-4333-8333-333333333333',
+      action: 'ban',
+      targetTypes: ['account', 'ip'],
+      networkIds: networks.map(({ id }) => id),
+      reason: 'Policy decision',
+    },
+  });
+  requestServiceMock
+    .mockResolvedValueOnce({
+      targets: [
+        {
+          type: 'account',
+          targetId: 'opaque-account',
+          displayValue: 'user…1234',
+          banned: false,
+          canBan: true,
+          canUnban: false,
+        },
+        ...networks.map((_, index) => ({
+          type: 'ip' as const,
+          targetId: `opaque-${index}`,
+          displayValue: '198.51.x.x',
+          banned: false,
+        })),
+      ],
+    })
+    .mockResolvedValueOnce({
+      operationId: 'operation-1',
+      requestId: '33333333-3333-4333-8333-333333333333',
+      status: 'applied',
+      targets: [],
+    });
+
+  const response = await POST(
+    new Request('http://localhost/moderation', { method: 'POST', body: '{}' }),
+    context,
+  );
+
+  expect(response.status).toBe(200);
+  expect(requestServiceMock).toHaveBeenCalledTimes(2);
+  expect((requestServiceMock.mock.calls[1][0].body as { targets: unknown[] }).targets).toHaveLength(
+    10,
+  );
+});
+
+test('POST rejects one account plus ten networks before calling Truleaf', async () => {
+  const networks = Array.from({ length: 10 }, (_, index) => createNetwork(index + 1));
+  getNetworksMock.mockResolvedValue(networks);
+  parseRequestMock.mockResolvedValue({
+    auth: { user: { id: 'operator-1' } },
+    body: {
+      requestId: '33333333-3333-4333-8333-333333333333',
+      action: 'ban',
+      targetTypes: ['account', 'ip'],
+      networkIds: networks.map(({ id }) => id),
+      reason: 'Policy decision',
+    },
+  });
+
+  const response = await POST(
+    new Request('http://localhost/moderation', { method: 'POST', body: '{}' }),
+    context,
+  );
+
+  expect(response.status).toBe(400);
+  expect(requestServiceMock).not.toHaveBeenCalled();
 });
 
 test('POST rejects stale or forged network record IDs without calling Truleaf', async () => {

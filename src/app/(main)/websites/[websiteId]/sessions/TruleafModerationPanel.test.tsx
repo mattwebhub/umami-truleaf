@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'vitest';
-import { canModerateAccount, getModerationResultMessage } from './TruleafModerationPanel';
+import {
+  canModerateAccount,
+  getModerationResultMessage,
+  isAdditionalTargetDisabled,
+} from './TruleafModerationPanel';
 
 describe('Truleaf moderation action UX', () => {
   test.each([
@@ -16,5 +20,11 @@ describe('Truleaf moderation action UX', () => {
 
     expect(canModerateAccount(account, 'ban')).toBe(false);
     expect(canModerateAccount(account, 'unban')).toBe(true);
+  });
+
+  test('allows account plus nine networks and disables an eleventh total target', () => {
+    expect(isAdditionalTargetDisabled(9, false)).toBe(false);
+    expect(isAdditionalTargetDisabled(10, false)).toBe(true);
+    expect(isAdditionalTargetDisabled(10, true)).toBe(false);
   });
 });

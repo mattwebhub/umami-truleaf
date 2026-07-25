@@ -18,6 +18,7 @@ import { ShieldBan } from 'lucide-react';
 import { useState } from 'react';
 import { LoadingPanel } from '@/components/common/LoadingPanel';
 import { useTruleafModerationQuery } from '@/components/hooks/queries/useTruleafModerationQuery';
+import { TRULEAF_MODERATION_TARGET_LIMIT } from '@/lib/truleaf/constants';
 import type { ModerationActionResponse } from '@/lib/truleaf/service';
 
 export function getModerationResultMessage(status: ModerationActionResponse['status']) {
@@ -36,6 +37,10 @@ export function canModerateAccount(
   return Boolean(action === 'ban' ? account?.canBan : account?.canUnban);
 }
 
+export function isAdditionalTargetDisabled(selectedTargetCount: number, isSelected: boolean) {
+  return !isSelected && selectedTargetCount >= TRULEAF_MODERATION_TARGET_LIMIT;
+}
+
 export function TruleafModerationPanel({
   websiteId,
   sessionId,
@@ -51,6 +56,7 @@ export function TruleafModerationPanel({
   const [action, setAction] = useState<'ban' | 'unban'>('ban');
   const accountAvailable = canModerateAccount(data?.account, action);
   const networkAvailable = Boolean(data?.networks?.length);
+  const selectedTargetCount = selectedNetworkIds.size + (accountSelected ? 1 : 0);
   const canSubmit =
     (accountSelected && accountAvailable) || (selectedNetworkIds.size > 0 && networkAvailable);
 
@@ -134,7 +140,10 @@ export function TruleafModerationPanel({
                     </Text>
                     <Checkbox
                       isSelected={accountSelected}
-                      isDisabled={!accountAvailable}
+                      isDisabled={
+                        !accountAvailable ||
+                        isAdditionalTargetDisabled(selectedTargetCount, accountSelected)
+                      }
                       onChange={setAccountSelected}
                     >
                       {accountAvailable
@@ -144,10 +153,18 @@ export function TruleafModerationPanel({
                     {networkAvailable ? (
                       <Column gap="2">
                         <Text weight="bold">Observed networks (select explicitly)</Text>
+                        <Text>
+                          Selected {selectedTargetCount} of {TRULEAF_MODERATION_TARGET_LIMIT}{' '}
+                          targets
+                        </Text>
                         {data.networks.map(network => (
                           <Checkbox
                             key={network.id}
                             isSelected={selectedNetworkIds.has(network.id)}
+                            isDisabled={isAdditionalTargetDisabled(
+                              selectedTargetCount,
+                              selectedNetworkIds.has(network.id),
+                            )}
                             onChange={selected => {
                               setSelectedNetworkIds(current => {
                                 const next = new Set(current);

@@ -1,6 +1,6 @@
 import debug from 'debug';
 import { after } from 'next/server';
-import { getIpAddress } from '@/lib/ip';
+import { normalizeNetworkAddress } from '@/lib/truleaf/network-crypto';
 
 const log = debug('umami:truleaf');
 
@@ -13,11 +13,23 @@ const log = debug('umami:truleaf');
  * header and prevent direct access to the collector.
  */
 export function getTruleafCaptureAddress(request: Request) {
-  if (process.env.NODE_ENV === 'production' && !process.env.CLIENT_IP_HEADER) {
+  const header = process.env.CLIENT_IP_HEADER?.trim();
+
+  if (!header) {
     return undefined;
   }
 
-  return getIpAddress(request.headers);
+  const value = request.headers.get(header);
+
+  if (!value) {
+    return undefined;
+  }
+
+  try {
+    return normalizeNetworkAddress(value).value;
+  } catch {
+    return undefined;
+  }
 }
 
 export function shouldCaptureTruleafNetwork(

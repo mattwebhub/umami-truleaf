@@ -102,9 +102,13 @@ ghcr.io/mattwebhub/umami-truleaf:sha-<full-git-sha>
 ghcr.io/mattwebhub/umami-truleaf:feat-truleaf-moderation
 ```
 
-The SHA tag is immutable by convention and is published with an SBOM and
-provenance attestation. Resolve that tag to its registry digest and pin the
-Kubernetes manifest to `@sha256:…`; never deploy the moving branch tag.
+Both tags are convenience discovery pointers and are not release identities:
+registry tags can be repointed by a later publication. Release Git tags
+matching `v*.*.*` must have an active GitHub ruleset that rejects updates and
+deletions. Resolve the published image to the verified workflow output digest
+and pin the Kubernetes manifest to `@sha256:…`; never deploy any tag directly.
+The digest-bound image is signed and published with SBOM and provenance
+attestations, which the image workflow verifies before it succeeds.
 
 1. Deploy Truleaf proof issuance, moderation API, and enforcement with its
    Umami credential configured.

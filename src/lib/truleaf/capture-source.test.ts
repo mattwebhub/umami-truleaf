@@ -33,6 +33,28 @@ test('cannot read a visitor-supplied IP from the analytics body', () => {
   expect(getTruleafCaptureAddress(request)).toBeUndefined();
 });
 
+test('does not fall back to spoofable headers when the trusted header is absent', () => {
+  vi.stubEnv('NODE_ENV', 'production');
+  process.env.CLIENT_IP_HEADER = 'x-real-ip';
+  const request = new Request('https://analytics.example/api/send', {
+    headers: {
+      'true-client-ip': '192.0.2.10',
+      'x-forwarded-for': '198.51.100.20',
+    },
+  });
+
+  expect(getTruleafCaptureAddress(request)).toBeUndefined();
+});
+
+test('rejects a malformed value in the configured transport header', () => {
+  process.env.CLIENT_IP_HEADER = 'x-real-ip';
+  const request = new Request('https://analytics.example/api/send', {
+    headers: { 'x-real-ip': '198.51.100.20, 203.0.113.30' },
+  });
+
+  expect(getTruleafCaptureAddress(request)).toBeUndefined();
+});
+
 test('fails closed for capture when production has no explicit client IP header', () => {
   vi.stubEnv('NODE_ENV', 'production');
   const request = new Request('https://analytics.example/api/send', {

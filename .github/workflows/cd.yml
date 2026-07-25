@@ -6,12 +6,10 @@ on:
       - feat/truleaf-moderation
     tags:
       - "v*.*.*"
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "Optional image version (e.g. 3.0.0, v3.0.0, or 3.0.0-beta.1)"
-        required: false
-        default: ""
+
+concurrency:
+  group: immutable-image-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   validate:
@@ -21,12 +19,12 @@ jobs:
       DATABASE_URL: "postgresql://user:pass@localhost:5432/dummy"
       SKIP_DB_CHECK: 1
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
         with:
           version: 10.15.1
           run_install: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: "pnpm"
@@ -39,7 +37,7 @@ jobs:
   build:
     name: Build and push immutable image
     needs: validate
-    uses: docker/github-builder/.github/workflows/build.yml@v1
+    uses: docker/github-builder/.github/workflows/build.yml@3415a188caae9a0da7fba83bc06985776e0b1790 # v1
     permissions:
       contents: read
       packages: write
@@ -53,11 +51,13 @@ jobs:
       cache-mode: max
       cache-scope: umami-truleaf
       sbom: true
+      sign: true
       meta-images: ghcr.io/${{ github.repository }}
+      # Registry tags are discovery pointers, not release identities. Production
+      # deployments must consume the verified digest returned by this job.
       meta-tags: |
         type=ref,event=branch
         type=semver,pattern={{version}}
-        type=semver,pattern={{version}},value=${{ inputs.version }},enable=${{ github.event_name == 'workflow_dispatch' && inputs.version != '' }}
         type=sha,format=long,prefix=sha-
       set-meta-labels: true
       set-meta-annotations: true
@@ -67,3 +67,72 @@ jobs:
         - registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+  verify-image:
+    name: Verify immutable image evidence
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Validate build outputs
+        env:
+          IMAGE_DIGEST: ${{ needs.build.outputs.digest }}
+          IMAGE_SIGNED: ${{ needs.build.outputs.signed }}
+          VERIFY_COMMANDS: ${{ needs.build.outputs.cosign-verify-commands }}
+        run: |
+          [[ "$IMAGE_SIGNED" == "true" ]]
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ -n "$VERIFY_COMMANDS" ]]
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
+        with:
+          cosign-release: ${{ needs.build.outputs.cosign-version }}
+
+      - name: Log into GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" |
+            docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Verify signatures, provenance, and SBOM
+        env:
+          VERIFY_COMMANDS: ${{ needs.build.outputs.cosign-verify-commands }}
+        run: |
+          while IFS= read -r verify_line; do
+            [[ "$verify_line" == "cosign verify"* ]]
+            read -r -a verify_args <<< "$verify_line"
+            [[ "${verify_args[0]}" == "cosign" ]]
+            "${verify_args[@]}"
+          done <<< "$VERIFY_COMMANDS"
+
+      - name: Verify manifest platforms
+        env:
+          IMAGE_DIGEST: ${{ needs.build.outputs.digest }}
+          IMAGE_NAME: ghcr.io/${{ github.repository }}
+        run: |
+          manifest_json="$(
+            docker buildx imagetools inspect --raw "$IMAGE_NAME@$IMAGE_DIGEST"
+          )"
+          jq -e '
+            any(.manifests[]; .platform.os == "linux" and .platform.architecture == "amd64") and
+            any(.manifests[]; .platform.os == "linux" and .platform.architecture == "arm64")
+          ' <<< "$manifest_json"
+
+      - name: Record release evidence
+        env:
+          IMAGE_DIGEST: ${{ needs.build.outputs.digest }}
+          IMAGE_NAME: ghcr.io/${{ github.repository }}
+        run: |
+          {
+            echo "### Immutable image"
+            echo
+            echo "\`$IMAGE_NAME@$IMAGE_DIGEST\`"
+            echo
+            echo "- Native platforms: linux/amd64, linux/arm64"
+            echo "- Cosign signatures and attestations: verified"
+            echo "- SBOM: generated and signed"
+          } >> "$GITHUB_STEP_SUMMARY"

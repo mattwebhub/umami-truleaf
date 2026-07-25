@@ -19,6 +19,7 @@ import { SessionData } from './SessionData';
 import { SessionInfo } from './SessionInfo';
 import { SessionReplaysDataTable } from './SessionReplaysDataTable';
 import { SessionStats } from './SessionStats';
+import { TruleafModerationPanel } from './TruleafModerationPanel';
 
 export function SessionProfile({
   websiteId,
@@ -62,6 +63,7 @@ export function SessionProfile({
             </Row>
             <SessionStats data={data} />
             <SessionInfo data={data} />
+            <TruleafModerationPanel websiteId={websiteId} sessionId={sessionId} />
 
             <Tabs>
               <TabList>

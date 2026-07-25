@@ -10,7 +10,14 @@ import { fetchWebsite } from '@/lib/load';
 import { parseRequest } from '@/lib/request';
 import { badRequest, forbidden, json, serverError } from '@/lib/response';
 import { anyObjectParam, urlOrPathParam } from '@/lib/schema';
+import {
+  getTruleafCaptureAddress,
+  scheduleTruleafNetworkCapture,
+  shouldCaptureTruleafNetwork,
+} from '@/lib/truleaf/capture-source';
+import { isTruleafNetworkCaptureEnabled, isTruleafWebsite } from '@/lib/truleaf/config';
 import { safeDecodeURI, safeDecodeURIComponent } from '@/lib/url';
+import { recordTruleafSessionNetwork } from '@/queries/prisma';
 import { createSession, saveEvent, saveSessionData } from '@/queries/sql';
 
 interface Cache {
@@ -169,6 +176,23 @@ export async function POST(request: Request) {
         distinctId: id,
         createdAt,
       });
+    }
+
+    // Truleaf network capture is isolated and fail-open. It runs only on a
+    // cache miss or identity transition, avoiding a write for every event.
+    if (
+      websiteId &&
+      shouldCaptureTruleafNetwork(cache?.sessionId, sessionId) &&
+      isTruleafNetworkCaptureEnabled() &&
+      isTruleafWebsite(websiteId)
+    ) {
+      const captureAddress = getTruleafCaptureAddress(request);
+
+      if (captureAddress) {
+        scheduleTruleafNetworkCapture(() =>
+          recordTruleafSessionNetwork(websiteId, sessionId, captureAddress),
+        );
+      }
     }
 
     // Visit info

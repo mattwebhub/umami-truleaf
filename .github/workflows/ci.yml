@@ -24,6 +24,7 @@ jobs:
           node-version: 22
           cache: "pnpm"
       - run: pnpm install --frozen-lockfile
+      - run: pnpm build-db
       # Upstream 3.2.0 has pre-existing full-tree Biome findings; keep the
       # fork integration itself as a strict formatting and lint gate.
       - run: pnpm check:truleaf

@@ -42,10 +42,21 @@ Encryption and blind-index keys must be independently generated. Do not reuse
 - Ingress must remove/overwrite the trusted header. Merely setting the variable
   without enforcing that proxy policy still permits spoofing.
 - `distinctId` is only a display candidate because a browser can forge it.
-  Account actions require `truleafIdentityProof` session data minted by the
-  authenticated Truleaf backend; Truleaf verifies the proof again before acting.
+  Account actions require a `truleafIdentityProof` minted by the authenticated
+  Truleaf backend; Truleaf verifies the proof again before acting.
+- `truleafIdentityProof` is a reserved collector property. The fork strips it
+  before generic `session_data` and `event_data` persistence (including custom
+  events) and stores an encrypted copy in `truleaf_session_identity` only for
+  enabled, allowlisted websites. It is never returned by generic properties
+  APIs, exports, or aggregate reports.
+- Successful account bans create a separate encrypted opaque ban reference
+  bound to the originating website, session, and account. This reference is
+  server-only and permits that source to undo the active ban after the
+  short-lived identity proof expires; it cannot authorize a new ban.
 - The browser selects opaque network-record IDs. The server resolves and
   decrypts them; raw addresses never enter browser requests or responses.
+- Moderation action responses expose enforcement state only; backend operation,
+  target, account, and ban identifiers are stripped before the browser boundary.
 - Session moderation loads at most the 50 most recently observed, unexpired
   networks. Operators can select at most 10 total targets per action.
 - Share tokens cannot use moderation APIs. The operator's Umami user UUID must
@@ -55,9 +66,17 @@ Encryption and blind-index keys must be independently generated. Do not reuse
 
 ## Storage and retention
 
-`truleaf_session_network` is additive and deliberately has no foreign keys or
-Prisma relations to Umami sessions. ClickHouse deployments can have sessions
-without PostgreSQL session rows, so a foreign key would make valid capture fail.
+`truleaf_session_network`, `truleaf_session_identity`, and
+`truleaf_session_account_ban_reference` are additive and deliberately have no
+foreign keys or Prisma relations to Umami sessions. ClickHouse deployments can
+have sessions without PostgreSQL session rows, so a foreign key would make valid
+capture fail. Identity proofs use the earlier of their signed JWT expiry and a
+30-day encrypted-storage cap; network observations use the configured retention
+period. Account-ban references contain neither the proof nor the account ID:
+they remain only while an indefinite ban is actionable, or until the ban's
+explicit expiry, successful unban, authoritative observation of an external
+unban, website reset/deletion, or owner deletion. Active bans owned by another
+source and transient status failures never delete the local recovery reference.
 Expired rows, including orphaned mappings, are removed independently. The
 production image exposes a dedicated, authenticated app-runtime endpoint:
 
@@ -68,16 +87,21 @@ Authorization: Bearer <TRULEAF_RETENTION_SECRET>
 
 Schedule that endpoint at least daily. `pnpm cleanup-truleaf-network` is also
 available from a source checkout for local operations, but is not the production
-container mechanism. Network ciphertext uses AES-256-GCM with associated
-website/session/key-version data. The authentication tag is appended to the
-ciphertext. HMAC-SHA256 blind indexes allow deduplication without deterministic
-encryption.
+container mechanism. Network, identity-proof, and account-ban-reference
+ciphertext use AES-256-GCM with purpose-separated associated data. Account
+references additionally bind the account ID, so moving ciphertext to another
+website, session, or account fails authentication. The authentication tag is
+appended to the ciphertext. HMAC-SHA256 blind indexes allow network
+deduplication without deterministic encryption. The historical
+`TRULEAF_NETWORK_ENCRYPTION_KEYS` keyring encrypts all fork-only sensitive
+tables; proofs and account references never use the network blind-index key.
 
 ## Key rotation
 
 1. Prepend a new version and key to `TRULEAF_NETWORK_ENCRYPTION_KEYS`.
 2. Restart all replicas.
-3. Keep old keys until every row using them expires or is re-encrypted.
+3. Keep old keys until every network, identity, and account-reference row using
+   them expires, is removed, or is re-encrypted.
 4. Rotate `TRULEAF_NETWORK_HMAC_KEY` separately only with a migration that
    recomputes blind indexes; changing it without migration breaks deduplication.
 
@@ -119,12 +143,38 @@ attestations, which the image workflow verifies before it succeeds.
 
 1. Deploy Truleaf proof issuance, moderation API, and enforcement with its
    Umami credential configured.
-2. Back up Umami PostgreSQL and run migration 21.
-3. Deploy this image with both feature flags disabled.
+2. Deploy this image with both feature flags disabled. Proof stripping is
+   unconditional, so this stops new legacy generic rows before cleanup. For a
+   ClickHouse deployment, wait at least five minutes after every old collector
+   is gone; migration 14 aborts if it observes a newer proof row.
+3. Back up Umami PostgreSQL and run migrations 21–23. Migrations 22 and 23
+   delete legacy `truleafIdentityProof` rows from generic session and event data
+   rather than trusting and copying browser-provided assertions. ClickHouse
+   deployments must also apply migrations 13 and 14. Migration 14 removes the
+   retired optional session pivot with `IF EXISTS`, synchronously deletes base
+   rows, and filters the reserved key/value/type tuple from each existing event
+   aggregate state in place. It never deletes and rebuilds a live aggregate
+   group, so safe states emitted concurrently by the new collector merge
+   exactly once. The operation is retry-safe after interruption.
 4. Enable capture for one allowlisted staging website and verify retention.
 5. Enable moderation and run anonymous-IP and verified-account E2E tests.
 6. Roll out production website IDs.
 
+Before applying migration 14, run its real ClickHouse canary:
+
+```bash
+pnpm test:clickhouse-migration-14
+```
+
+The canary pins ClickHouse 26.7.1.1315 by image digest. It exercises upgraded
+schemas both without and with the retired session pivot, blocks the aggregate
+mutation to insert a concurrent safe property through the live materialized
+view, verifies exact-once safe state and complete proof removal, and reapplies
+the migration to prove retry/idempotency. Truleaf's current Kubernetes
+deployment uses PostgreSQL only, so the ClickHouse migrations are not applied
+to today's Truleaf production database; this coverage keeps the fork valid for
+Umami's supported ClickHouse topology.
+
 To roll back, disable both flags, revoke the service credential, and deploy the
-pinned upstream image. The additive table is ignored by upstream and can remain
-until the retention job or an explicitly reviewed cleanup removes it.
+pinned upstream image. The additive tables are ignored by upstream and can
+remain until the retention job or an explicitly reviewed cleanup removes them.

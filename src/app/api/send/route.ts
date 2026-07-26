@@ -15,9 +15,17 @@ import {
   scheduleTruleafNetworkCapture,
   shouldCaptureTruleafNetwork,
 } from '@/lib/truleaf/capture-source';
-import { isTruleafNetworkCaptureEnabled, isTruleafWebsite } from '@/lib/truleaf/config';
+import {
+  isTruleafModerationEnabled,
+  isTruleafNetworkCaptureEnabled,
+  isTruleafWebsite,
+} from '@/lib/truleaf/config';
+import {
+  partitionTruleafIdentityProof,
+  scheduleTruleafIdentityProofStorage,
+} from '@/lib/truleaf/identity-proof';
 import { safeDecodeURI, safeDecodeURIComponent } from '@/lib/url';
-import { recordTruleafSessionNetwork } from '@/queries/prisma';
+import { recordTruleafSessionIdentityProof, recordTruleafSessionNetwork } from '@/queries/prisma';
 import { createSession, saveEvent, saveSessionData } from '@/queries/sql';
 
 interface Cache {
@@ -97,7 +105,7 @@ export async function POST(request: Request) {
       url,
       referrer,
       name,
-      data,
+      data: rawData,
       title,
       tag,
       timestamp,
@@ -108,6 +116,12 @@ export async function POST(request: Request) {
       fcp,
       ttfb,
     } = payload;
+    // Moderation credentials are never analytics properties. Partition once
+    // before branching so custom events and any future generic data path cannot
+    // accidentally persist the reserved field.
+    const { sessionData: data, proof: identityProof } = rawData
+      ? partitionTruleafIdentityProof(rawData)
+      : { sessionData: undefined, proof: undefined };
 
     const sourceId = websiteId || pixelId || linkId;
 
@@ -302,13 +316,27 @@ export async function POST(request: Request) {
       });
     } else if (type === COLLECTION_TYPE.identify) {
       if (data) {
-        await saveSessionData({
-          websiteId,
-          sessionId,
-          sessionData: data,
-          distinctId: id,
-          createdAt,
-        });
+        if (
+          identityProof &&
+          websiteId &&
+          id &&
+          isTruleafModerationEnabled() &&
+          isTruleafWebsite(websiteId)
+        ) {
+          scheduleTruleafIdentityProofStorage(() =>
+            recordTruleafSessionIdentityProof(websiteId, sessionId, id, identityProof),
+          );
+        }
+
+        if (Object.keys(data).length) {
+          await saveSessionData({
+            websiteId,
+            sessionId,
+            sessionData: data,
+            distinctId: id,
+            createdAt,
+          });
+        }
       }
     } else if (type === COLLECTION_TYPE.performance) {
       const base = hostname ? `https://${hostname}` : 'https://localhost';

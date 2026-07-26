@@ -12,12 +12,19 @@ import {
   type ModerationStatusResponse,
   type ModerationTarget,
   moderationActionSchema,
+  moderationBrowserActionSchema,
   moderationStatusSchema,
   requestTruleafModeration,
 } from '@/lib/truleaf/service';
 import { canUpdateWebsite } from '@/permissions';
-import { getTruleafSessionNetworks } from '@/queries/prisma';
-import { getSessionData, getWebsiteSession } from '@/queries/sql';
+import {
+  deleteTruleafSessionAccountBanReference,
+  getTruleafSessionAccountBanReference,
+  getTruleafSessionIdentityProof,
+  getTruleafSessionNetworks,
+  recordTruleafSessionAccountBanReference,
+} from '@/queries/prisma';
+import { getWebsiteSession } from '@/queries/sql';
 
 const actionSchema = z
   .object({
@@ -97,16 +104,16 @@ async function resolveContext(request: Request, context: RouteContext) {
     return { error: notFound({ message: 'Session not found' }) };
   }
 
-  const [networks, sessionData] = await Promise.all([
+  const [networks, identityProof, accountBanReference] = await Promise.all([
     getTruleafSessionNetworks(websiteId, sessionId),
-    getSessionData(websiteId, sessionId),
+    getTruleafSessionIdentityProof(websiteId, sessionId),
+    session.distinctId
+      ? getTruleafSessionAccountBanReference(websiteId, sessionId, session.distinctId)
+      : undefined,
   ]);
-  const identityProof = sessionData?.find(
-    ({ dataKey }: { dataKey: string }) => dataKey === 'truleafIdentityProof',
-  )?.stringValue;
   const source: ModerationSource = { system: 'umami', websiteId, sessionId };
 
-  return { auth, session, networks, identityProof, source };
+  return { auth, session, networks, identityProof, accountBanReference, source };
 }
 
 function resolveTargets(
@@ -115,11 +122,37 @@ function resolveTargets(
   targetTypes: Array<'account' | 'ip'>,
   networkIds: string[] = [],
   identityProof?: string,
+  accountBanReference?: string,
+  action?: 'ban' | 'unban',
 ) {
   const targets: ModerationTarget[] = [];
 
-  if (targetTypes.includes('account') && session.distinctId && identityProof) {
-    targets.push({ type: 'account', value: session.distinctId, proof: identityProof });
+  if (targetTypes.includes('account') && session.distinctId) {
+    if (action === 'ban') {
+      if (identityProof) {
+        targets.push({ type: 'account', value: session.distinctId, proof: identityProof });
+      }
+    } else if (action === 'unban') {
+      if (accountBanReference) {
+        targets.push({
+          type: 'account',
+          value: session.distinctId,
+          banId: accountBanReference,
+        });
+      } else if (identityProof) {
+        targets.push({ type: 'account', value: session.distinctId, proof: identityProof });
+      }
+    } else {
+      if (identityProof) {
+        targets.push({ type: 'account', value: session.distinctId, proof: identityProof });
+      } else if (accountBanReference) {
+        targets.push({
+          type: 'account',
+          value: session.distinctId,
+          banId: accountBanReference,
+        });
+      }
+    }
   }
 
   if (targetTypes.includes('ip')) {
@@ -142,25 +175,34 @@ function getAccountDisplayValue(status: ModerationStatusResponse) {
   return getAccountStatus(status)?.displayValue;
 }
 
+function getNetworkStatuses(status: ModerationStatusResponse) {
+  return status.targets.filter(target => target.type === 'ip');
+}
+
 async function getTargetStatus(
   targets: ModerationTarget[],
   source: ModerationSource,
 ): Promise<ModerationStatusResponse> {
-  const combined: ModerationStatusResponse = { targets: [] };
+  const chunks: ModerationTarget[][] = [];
 
   for (let index = 0; index < targets.length; index += TRULEAF_MODERATION_TARGET_LIMIT) {
-    const status = await requestTruleafModeration({
-      path: '/api/v1/internal/moderation/status',
-      body: {
-        targets: targets.slice(index, index + TRULEAF_MODERATION_TARGET_LIMIT),
-        source,
-      },
-      schema: moderationStatusSchema,
-    });
-    combined.targets.push(...status.targets);
+    chunks.push(targets.slice(index, index + TRULEAF_MODERATION_TARGET_LIMIT));
   }
 
-  return combined;
+  const statuses = await Promise.all(
+    chunks.map(chunk =>
+      requestTruleafModeration({
+        path: '/api/v1/internal/moderation/status',
+        body: {
+          targets: chunk,
+          source,
+        },
+        schema: moderationStatusSchema,
+      }),
+    ),
+  );
+
+  return { targets: statuses.flatMap(status => status.targets) };
 }
 
 export async function GET(request: Request, context: RouteContext) {
@@ -171,35 +213,85 @@ export async function GET(request: Request, context: RouteContext) {
       return resolved.error;
     }
 
-    const { session, networks, identityProof, source } = resolved;
+    const { session, networks, identityProof, accountBanReference, source } = resolved;
     const targets = resolveTargets(
       session,
       networks,
       ['account', 'ip'],
       networks.map(({ id }) => id),
       identityProof,
+      accountBanReference,
     );
     const status = targets.length ? await getTargetStatus(targets, source) : { targets: [] };
+    const accountStatus = getAccountStatus(status);
+    const networkStatuses = getNetworkStatuses(status);
+    const accountCanUnban =
+      accountStatus?.banned === true &&
+      accountStatus.canUnban === true &&
+      Boolean(accountStatus.banId);
+
+    if (accountBanReference && accountStatus?.banned === false) {
+      // A successful status response for this account is authoritative. Only
+      // remove the local capability when no active ban exists at all; an active
+      // cross-source ban returns banned=true without our source-bound banId and
+      // must not be affected.
+      await deleteTruleafSessionAccountBanReference(
+        source.websiteId,
+        source.sessionId,
+        session.distinctId,
+        accountBanReference,
+      );
+    } else if (
+      session.distinctId &&
+      accountCanUnban &&
+      accountStatus?.banId &&
+      accountStatus.banId !== accountBanReference
+    ) {
+      await recordTruleafSessionAccountBanReference(
+        source.websiteId,
+        source.sessionId,
+        session.distinctId,
+        accountStatus.banId,
+        accountStatus.expiresAt ? new Date(accountStatus.expiresAt) : null,
+      );
+    }
 
     return json({
       account: session.distinctId
         ? {
             displayValue: getAccountDisplayValue(status) ?? 'Unverified account candidate',
-            canBan: getAccountStatus(status)?.canBan === true,
-            canUnban: getAccountStatus(status)?.canUnban === true,
+            banned: accountStatus?.banned === true,
+            canBan: accountStatus?.canBan === true,
+            canUnban: accountCanUnban,
+            expiresAt: accountStatus?.expiresAt,
           }
         : null,
       networks: networks.map(
-        ({ id, maskedAddress, addressFamily, firstSeenAt, lastSeenAt, expiresAt }) => ({
-          id,
-          maskedAddress,
-          addressFamily,
-          firstSeenAt,
-          lastSeenAt,
-          expiresAt,
-        }),
+        ({ id, maskedAddress, addressFamily, firstSeenAt, lastSeenAt, expiresAt }, index) => {
+          const targetStatus = networkStatuses[index];
+          const banned = targetStatus?.banned === true;
+          const sourceMatches = targetStatus?.sourceMatches === true;
+
+          return {
+            id,
+            maskedAddress,
+            addressFamily,
+            firstSeenAt,
+            lastSeenAt,
+            expiresAt,
+            banned,
+            canBan: Boolean(targetStatus) && !banned,
+            canUnban:
+              banned &&
+              sourceMatches &&
+              targetStatus?.canUnban === true &&
+              Boolean(targetStatus?.banId),
+            sourceMatches,
+            banExpiresAt: targetStatus?.expiresAt,
+            vercel: targetStatus?.vercel ?? 'not_applicable',
+          };
+        },
       ),
-      status,
     });
   } catch (error) {
     return serverError(error);
@@ -220,9 +312,17 @@ export async function POST(request: Request, context: RouteContext) {
       return resolved.error;
     }
 
-    const { auth, session, networks, identityProof, source } = resolved;
+    const { auth, session, networks, identityProof, accountBanReference, source } = resolved;
     const { requestId, action, targetTypes, networkIds, reason, expiresAt } = parsed.body;
-    let targets = resolveTargets(session, networks, targetTypes, networkIds, identityProof);
+    const targets = resolveTargets(
+      session,
+      networks,
+      targetTypes,
+      networkIds,
+      identityProof,
+      accountBanReference,
+      action,
+    );
 
     if (!targets.length) {
       return badRequest({ message: 'None of the selected target types are available' });
@@ -234,30 +334,67 @@ export async function POST(request: Request, context: RouteContext) {
       });
     }
 
-    if (targetTypes.includes('account')) {
-      const status = await getTargetStatus(targets, source);
+    const status = await getTargetStatus(targets, source);
+    const authorizedTargets: ModerationTarget[] = [];
 
-      const accountStatus = getAccountStatus(status);
-      const permitted =
-        action === 'ban' ? accountStatus?.canBan === true : accountStatus?.canUnban === true;
+    for (const [index, target] of targets.entries()) {
+      const targetStatus = status.targets[index];
 
-      if (!permitted || (action === 'unban' && !accountStatus?.banId)) {
+      if (!targetStatus || targetStatus.type !== target.type) {
         return unauthorized({
-          message: `Truleaf has not authorized this account ${action} action`,
+          message: 'Truleaf did not authorize the selected moderation target',
         });
       }
 
-      if (action === 'unban') {
-        targets = targets.map(target =>
-          target.type === 'account'
+      if (target.type === 'account') {
+        const permitted =
+          action === 'ban' ? targetStatus.canBan === true : targetStatus.canUnban === true;
+        const banId = targetStatus.banId;
+
+        if (!permitted || (action === 'unban' && !banId)) {
+          return unauthorized({
+            message: `Truleaf has not authorized this account ${action} action`,
+          });
+        }
+
+        authorizedTargets.push(
+          action === 'unban'
             ? {
-                type: 'account' as const,
+                type: 'account',
                 value: target.value,
-                banId: accountStatus.banId,
+                banId,
               }
             : target,
         );
+        continue;
       }
+
+      if (action === 'ban') {
+        if (targetStatus.banned) {
+          return badRequest({
+            message: 'An active ban already exists for a selected network',
+          });
+        }
+        authorizedTargets.push(target);
+        continue;
+      }
+
+      if (
+        !targetStatus.banned ||
+        targetStatus.sourceMatches !== true ||
+        targetStatus.canUnban !== true ||
+        !targetStatus.banId
+      ) {
+        return unauthorized({
+          message: 'The selected network ban did not originate from this Umami session',
+        });
+      }
+
+      authorizedTargets.push({
+        type: 'ip',
+        value: target.value,
+        banId: targetStatus.banId,
+      });
     }
 
     const result = await requestTruleafModeration({
@@ -265,7 +402,7 @@ export async function POST(request: Request, context: RouteContext) {
       body: {
         requestId,
         action,
-        targets,
+        targets: authorizedTargets,
         reason,
         expiresAt,
         source,
@@ -274,7 +411,34 @@ export async function POST(request: Request, context: RouteContext) {
       schema: moderationActionSchema,
     });
 
-    return json(result);
+    const accountResult = result.targets.find(target => target.type === 'account');
+
+    if (
+      session.distinctId &&
+      targetTypes.includes('account') &&
+      accountResult?.status === 'applied'
+    ) {
+      if (action === 'ban') {
+        await recordTruleafSessionAccountBanReference(
+          source.websiteId,
+          source.sessionId,
+          session.distinctId,
+          result.operationId,
+          expiresAt ? new Date(expiresAt) : null,
+        );
+      } else {
+        if (accountBanReference) {
+          await deleteTruleafSessionAccountBanReference(
+            source.websiteId,
+            source.sessionId,
+            session.distinctId,
+            accountBanReference,
+          );
+        }
+      }
+    }
+
+    return json(moderationBrowserActionSchema.parse(result));
   } catch (error) {
     return serverError(error);
   }

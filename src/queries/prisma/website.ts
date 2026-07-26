@@ -153,6 +153,14 @@ export async function resetWebsite(websiteId: string) {
         where: { websiteId },
       });
 
+      await tx.truleafSessionIdentity.deleteMany({
+        where: { websiteId },
+      });
+
+      await tx.truleafSessionAccountBanReference.deleteMany({
+        where: { websiteId },
+      });
+
       await tx.sessionData.deleteMany({
         where: { websiteId },
       });
@@ -205,6 +213,14 @@ export async function deleteWebsite(websiteId: string) {
       });
 
       await tx.eventData.deleteMany({
+        where: { websiteId },
+      });
+
+      await tx.truleafSessionIdentity.deleteMany({
+        where: { websiteId },
+      });
+
+      await tx.truleafSessionAccountBanReference.deleteMany({
         where: { websiteId },
       });
 

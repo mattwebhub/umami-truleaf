@@ -19,9 +19,9 @@ import { useState } from 'react';
 import { LoadingPanel } from '@/components/common/LoadingPanel';
 import { useTruleafModerationQuery } from '@/components/hooks/queries/useTruleafModerationQuery';
 import { TRULEAF_MODERATION_TARGET_LIMIT } from '@/lib/truleaf/constants';
-import type { ModerationActionResponse } from '@/lib/truleaf/service';
+import type { ModerationBrowserActionResponse } from '@/lib/truleaf/service';
 
-export function getModerationResultMessage(status: ModerationActionResponse['status']) {
+export function getModerationResultMessage(status: ModerationBrowserActionResponse['status']) {
   return {
     applied: 'Moderation applied',
     partial: 'Moderation partially applied; review target status',
@@ -35,6 +35,33 @@ export function canModerateAccount(
   action: 'ban' | 'unban',
 ) {
   return Boolean(action === 'ban' ? account?.canBan : account?.canUnban);
+}
+
+export interface NetworkModerationState {
+  banned: boolean;
+  canBan: boolean;
+  canUnban: boolean;
+  sourceMatches: boolean;
+}
+
+export function canModerateNetwork(network: NetworkModerationState, action: 'ban' | 'unban') {
+  return action === 'ban'
+    ? network.canBan && !network.banned
+    : network.banned && network.sourceMatches && network.canUnban;
+}
+
+export function getNetworkModerationStateMessage(network: NetworkModerationState) {
+  if (!network.banned) {
+    return 'not banned';
+  }
+
+  if (!network.sourceMatches) {
+    return 'already banned from another session; cannot unban here';
+  }
+
+  return network.canUnban
+    ? 'banned by this session; unban available'
+    : 'banned by this session; unban unavailable';
 }
 
 export function isAdditionalTargetDisabled(selectedTargetCount: number, isSelected: boolean) {
@@ -55,10 +82,23 @@ export function TruleafModerationPanel({
   const [selectedNetworkIds, setSelectedNetworkIds] = useState<Set<string>>(new Set());
   const [action, setAction] = useState<'ban' | 'unban'>('ban');
   const accountAvailable = canModerateAccount(data?.account, action);
-  const networkAvailable = Boolean(data?.networks?.length);
+  const hasAnyModeration = Boolean(
+    data &&
+      (canModerateAccount(data.account, 'ban') ||
+        canModerateAccount(data.account, 'unban') ||
+        data.networks.some(
+          network => canModerateNetwork(network, 'ban') || canModerateNetwork(network, 'unban'),
+        )),
+  );
   const selectedTargetCount = selectedNetworkIds.size + (accountSelected ? 1 : 0);
+  const selectedNetworksAreEligible = [...selectedNetworkIds].every(networkId => {
+    const network = data?.networks.find(candidate => candidate.id === networkId);
+    return Boolean(network && canModerateNetwork(network, action));
+  });
   const canSubmit =
-    (accountSelected && accountAvailable) || (selectedNetworkIds.size > 0 && networkAvailable);
+    (accountSelected || selectedNetworkIds.size > 0) &&
+    (!accountSelected || accountAvailable) &&
+    selectedNetworksAreEligible;
 
   const changeAction = (nextAction: 'ban' | 'unban') => {
     if (nextAction === action) return;
@@ -113,24 +153,23 @@ export function TruleafModerationPanel({
                     : 'Account candidate is not currently authorized for moderation'
                   : 'Anonymous session'}
               </Text>
-              {data.status.targets.map((target, index) => (
-                <Text key={target.targetId ?? `${target.type}-${index}`}>
-                  {target.displayValue ?? target.type}: {target.banned ? 'banned' : 'not banned'}
-                  {target.expiresAt ? ` until ${new Date(target.expiresAt).toLocaleString()}` : ''}
-                  {target.vercel ? ` · Vercel: ${target.vercel}` : ''}
-                </Text>
-              ))}
-              <Text>
-                {data.networks.length
-                  ? `Observed network: ${data.networks
-                      .map(network => network.maskedAddress)
-                      .join(', ')}`
-                  : 'No trusted network observation is available'}
-              </Text>
+              {data.networks.length ? (
+                data.networks.map(network => (
+                  <Text key={network.id}>
+                    {network.maskedAddress}: {getNetworkModerationStateMessage(network)}
+                    {network.banExpiresAt
+                      ? ` until ${new Date(network.banExpiresAt).toLocaleString()}`
+                      : ''}
+                    {network.vercel !== 'not_applicable' ? ` · Vercel: ${network.vercel}` : ''}
+                  </Text>
+                ))
+              ) : (
+                <Text>No trusted network observation is available</Text>
+              )}
             </Column>
             <Button
               variant="outline"
-              isDisabled={!accountAvailable && !networkAvailable}
+              isDisabled={!hasAnyModeration}
               onPress={() => setShowDialog(true)}
             >
               <ShieldBan size={16} />
@@ -159,34 +198,39 @@ export function TruleafModerationPanel({
                         ? `Account ${data.account?.displayValue}`
                         : `Account (${action} is not authorized by Truleaf)`}
                     </Checkbox>
-                    {networkAvailable ? (
+                    {data.networks.length ? (
                       <Column gap="2">
                         <Text weight="bold">Observed networks (select explicitly)</Text>
                         <Text>
                           Selected {selectedTargetCount} of {TRULEAF_MODERATION_TARGET_LIMIT}{' '}
                           targets
                         </Text>
-                        {data.networks.map(network => (
-                          <Checkbox
-                            key={network.id}
-                            isSelected={selectedNetworkIds.has(network.id)}
-                            isDisabled={isAdditionalTargetDisabled(
-                              selectedTargetCount,
-                              selectedNetworkIds.has(network.id),
-                            )}
-                            onChange={selected => {
-                              setSelectedNetworkIds(current => {
-                                const next = new Set(current);
-                                if (selected) next.add(network.id);
-                                else next.delete(network.id);
-                                return next;
-                              });
-                            }}
-                          >
-                            {network.maskedAddress} — last seen{' '}
-                            {new Date(network.lastSeenAt).toLocaleString()}
-                          </Checkbox>
-                        ))}
+                        {data.networks.map(network => {
+                          const isSelected = selectedNetworkIds.has(network.id);
+                          const isEligible = canModerateNetwork(network, action);
+
+                          return (
+                            <Checkbox
+                              key={network.id}
+                              isSelected={isSelected}
+                              isDisabled={
+                                !isEligible ||
+                                isAdditionalTargetDisabled(selectedTargetCount, isSelected)
+                              }
+                              onChange={selected => {
+                                setSelectedNetworkIds(current => {
+                                  const next = new Set(current);
+                                  if (selected) next.add(network.id);
+                                  else next.delete(network.id);
+                                  return next;
+                                });
+                              }}
+                            >
+                              {network.maskedAddress} — {getNetworkModerationStateMessage(network)}{' '}
+                              · last seen {new Date(network.lastSeenAt).toLocaleString()}
+                            </Checkbox>
+                          );
+                        })}
                       </Column>
                     ) : (
                       <Text>Current network unavailable</Text>

@@ -1,6 +1,10 @@
 import crypto from 'node:crypto';
 import { json, unauthorized } from '@/lib/response';
-import { deleteExpiredTruleafSessionNetworks } from '@/queries/prisma';
+import {
+  deleteExpiredTruleafSessionAccountBanReferences,
+  deleteExpiredTruleafSessionIdentities,
+  deleteExpiredTruleafSessionNetworks,
+} from '@/queries/prisma';
 
 function hasValidSecret(request: Request) {
   const expected = process.env.TRULEAF_RETENTION_SECRET;
@@ -24,7 +28,16 @@ export async function POST(request: Request) {
     return unauthorized();
   }
 
-  const result = await deleteExpiredTruleafSessionNetworks();
+  const [networks, identities, accountBanReferences] = await Promise.all([
+    deleteExpiredTruleafSessionNetworks(),
+    deleteExpiredTruleafSessionIdentities(),
+    deleteExpiredTruleafSessionAccountBanReferences(),
+  ]);
 
-  return json({ deleted: result.count });
+  return json({
+    deleted: networks.count + identities.count + accountBanReferences.count,
+    deletedNetworks: networks.count,
+    deletedIdentityProofs: identities.count,
+    deletedAccountBanReferences: accountBanReferences.count,
+  });
 }

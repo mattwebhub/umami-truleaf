@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'vitest';
 import {
   canModerateAccount,
+  canModerateNetwork,
   getModerationResultMessage,
+  getNetworkModerationStateMessage,
   isAdditionalTargetDisabled,
 } from './TruleafModerationPanel';
 
@@ -26,5 +28,46 @@ describe('Truleaf moderation action UX', () => {
     expect(isAdditionalTargetDisabled(9, false)).toBe(false);
     expect(isAdditionalTargetDisabled(10, false)).toBe(true);
     expect(isAdditionalTargetDisabled(10, true)).toBe(false);
+  });
+
+  test('allows an unbanned network only for ban', () => {
+    const network = {
+      banned: false,
+      canBan: true,
+      canUnban: false,
+      sourceMatches: false,
+    };
+
+    expect(canModerateNetwork(network, 'ban')).toBe(true);
+    expect(canModerateNetwork(network, 'unban')).toBe(false);
+    expect(getNetworkModerationStateMessage(network)).toBe('not banned');
+  });
+
+  test('allows unban only when the active network ban belongs to this session', () => {
+    const network = {
+      banned: true,
+      canBan: false,
+      canUnban: true,
+      sourceMatches: true,
+    };
+
+    expect(canModerateNetwork(network, 'ban')).toBe(false);
+    expect(canModerateNetwork(network, 'unban')).toBe(true);
+    expect(getNetworkModerationStateMessage(network)).toContain('banned by this session');
+  });
+
+  test('disables both re-ban and cross-session unban for a shared IP', () => {
+    const network = {
+      banned: true,
+      canBan: false,
+      canUnban: false,
+      sourceMatches: false,
+    };
+
+    expect(canModerateNetwork(network, 'ban')).toBe(false);
+    expect(canModerateNetwork(network, 'unban')).toBe(false);
+    expect(getNetworkModerationStateMessage(network)).toBe(
+      'already banned from another session; cannot unban here',
+    );
   });
 });

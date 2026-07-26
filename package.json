@@ -40,6 +40,7 @@
     "change-password": "node scripts/change-password.js",
     "postbuild": "node scripts/postbuild.js",
     "test": "vitest run",
+    "test:clickhouse-migration-14": "bash scripts/canary-clickhouse-migration-14.sh",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",

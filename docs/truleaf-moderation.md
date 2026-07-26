@@ -144,16 +144,36 @@ attestations, which the image workflow verifies before it succeeds.
 1. Deploy Truleaf proof issuance, moderation API, and enforcement with its
    Umami credential configured.
 2. Deploy this image with both feature flags disabled. Proof stripping is
-   unconditional, so this stops new legacy generic rows before cleanup.
+   unconditional, so this stops new legacy generic rows before cleanup. For a
+   ClickHouse deployment, wait at least five minutes after every old collector
+   is gone; migration 14 aborts if it observes a newer proof row.
 3. Back up Umami PostgreSQL and run migrations 21–23. Migrations 22 and 23
    delete legacy `truleafIdentityProof` rows from generic session and event data
    rather than trusting and copying browser-provided assertions. ClickHouse
-   deployments must also apply migrations 13 and 14. Migration 14 captures the
-   affected materialized-pivot groups, synchronously deletes base and aggregate
-   state, and rebuilds only their non-proof properties.
+   deployments must also apply migrations 13 and 14. Migration 14 removes the
+   retired optional session pivot with `IF EXISTS`, synchronously deletes base
+   rows, and filters the reserved key/value/type tuple from each existing event
+   aggregate state in place. It never deletes and rebuilds a live aggregate
+   group, so safe states emitted concurrently by the new collector merge
+   exactly once. The operation is retry-safe after interruption.
 4. Enable capture for one allowlisted staging website and verify retention.
 5. Enable moderation and run anonymous-IP and verified-account E2E tests.
 6. Roll out production website IDs.
+
+Before applying migration 14, run its real ClickHouse canary:
+
+```bash
+pnpm test:clickhouse-migration-14
+```
+
+The canary pins ClickHouse 26.7.1.1315 by image digest. It exercises upgraded
+schemas both without and with the retired session pivot, blocks the aggregate
+mutation to insert a concurrent safe property through the live materialized
+view, verifies exact-once safe state and complete proof removal, and reapplies
+the migration to prove retry/idempotency. Truleaf's current Kubernetes
+deployment uses PostgreSQL only, so the ClickHouse migrations are not applied
+to today's Truleaf production database; this coverage keeps the fork valid for
+Umami's supported ClickHouse topology.
 
 To roll back, disable both flags, revoke the service credential, and deploy the
 pinned upstream image. The additive tables are ignored by upstream and can

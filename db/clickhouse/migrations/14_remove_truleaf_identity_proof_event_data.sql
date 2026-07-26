@@ -1,51 +1,30 @@
--- Materialized views do not retract AggregateFunction state when source rows
--- are mutated. Capture only the pivot groups containing the reserved proof so
--- they can be rebuilt from sanitized base data without dropping unrelated
--- analytics properties.
-CREATE TABLE IF NOT EXISTS umami.truleaf_proof_event_pivot_keys
-(
-    website_id UUID,
-    session_id UUID,
-    event_id UUID,
-    event_name String,
-    url_path String,
-    created_at DateTime('UTC')
+-- New collectors must strip the reserved proof before this migration runs.
+-- Requiring a quiet window turns that deployment-order contract into an
+-- executable preflight and prevents a legacy collector racing the mutations.
+SELECT throwIf(
+    count() > 0,
+    'Migration 14 requires truleafIdentityProof ingestion to be stopped for at least 5 minutes'
 )
-ENGINE = MergeTree()
-ORDER BY (website_id, session_id, event_id, event_name, created_at);
+FROM (
+    SELECT created_at
+    FROM umami.session_data
+    WHERE data_key = 'truleafIdentityProof'
+        AND created_at > now() - INTERVAL 5 MINUTE
+    UNION ALL
+    SELECT created_at
+    FROM umami.event_data
+    WHERE data_key = 'truleafIdentityProof'
+        AND created_at > now() - INTERVAL 5 MINUTE
+);
 
-CREATE TABLE IF NOT EXISTS umami.truleaf_proof_session_pivot_keys
-(
-    website_id UUID,
-    session_id UUID,
-    distinct_id String
-)
-ENGINE = MergeTree()
-ORDER BY (website_id, session_id, distinct_id);
+-- session_data_pivot was intentionally retired upstream. Older installations
+-- may still have it, while upgraded installations never created it. Removing
+-- both objects with IF EXISTS makes those histories converge and eliminates
+-- any aggregate proof residue without resurrecting an unused table.
+DROP VIEW IF EXISTS umami.session_data_pivot_mv SYNC;
+DROP TABLE IF EXISTS umami.session_data_pivot SYNC;
 
-INSERT INTO umami.truleaf_proof_event_pivot_keys
-SELECT
-    website_id,
-    session_id,
-    event_id,
-    event_name,
-    url_path,
-    created_at
-FROM umami.event_data_pivot
-GROUP BY website_id, session_id, event_id, event_name, url_path, created_at
-HAVING has(groupArrayMerge(property_keys), 'truleafIdentityProof');
-
-INSERT INTO umami.truleaf_proof_session_pivot_keys
-SELECT
-    website_id,
-    session_id,
-    distinct_id
-FROM umami.session_data_pivot
-GROUP BY website_id, session_id, distinct_id
-HAVING has(groupArrayMerge(property_keys), 'truleafIdentityProof');
-
--- Purge generic base storage first. Synchronous mutations also rewrite the
--- session_data projection, but do not repair materialized aggregate targets.
+-- Synchronous base mutations also rewrite session_data projections.
 ALTER TABLE umami.session_data
     DELETE WHERE data_key = 'truleafIdentityProof'
     SETTINGS mutations_sync = 2;
@@ -54,93 +33,54 @@ ALTER TABLE umami.event_data
     DELETE WHERE data_key = 'truleafIdentityProof'
     SETTINGS mutations_sync = 2;
 
+-- Source-table mutations do not retract state already emitted by an
+-- incremental materialized view. Rewrite each physical aggregate state in
+-- place instead of deleting and rebuilding groups. Concurrent collector
+-- inserts are safe after the preflight: the deployed collector cannot emit the
+-- reserved key, and new safe-only states merge once with the sanitized state.
 ALTER TABLE umami.event_data_pivot
-    DELETE WHERE (
-        website_id,
-        session_id,
-        event_id,
-        event_name,
-        url_path,
-        created_at
-    ) IN (
-        SELECT
-            website_id,
-            session_id,
-            event_id,
-            event_name,
-            url_path,
-            created_at
-        FROM umami.truleaf_proof_event_pivot_keys
-    )
+    UPDATE
+        property_keys = arrayReduce(
+            'groupArrayState',
+            arrayMap(
+                item -> item.1,
+                arrayFilter(
+                    item -> item.1 != 'truleafIdentityProof',
+                    arrayZip(
+                        finalizeAggregation(property_keys),
+                        finalizeAggregation(property_values),
+                        finalizeAggregation(property_types)
+                    )
+                )
+            )
+        ),
+        property_values = arrayReduce(
+            'groupArrayState',
+            arrayMap(
+                item -> item.2,
+                arrayFilter(
+                    item -> item.1 != 'truleafIdentityProof',
+                    arrayZip(
+                        finalizeAggregation(property_keys),
+                        finalizeAggregation(property_values),
+                        finalizeAggregation(property_types)
+                    )
+                )
+            )
+        ),
+        property_types = arrayReduce(
+            'groupArrayState',
+            arrayMap(
+                item -> item.3,
+                arrayFilter(
+                    item -> item.1 != 'truleafIdentityProof',
+                    arrayZip(
+                        finalizeAggregation(property_keys),
+                        finalizeAggregation(property_values),
+                        finalizeAggregation(property_types)
+                    )
+                )
+            )
+        )
+    WHERE has(finalizeAggregation(property_keys), 'truleafIdentityProof')
     SETTINGS mutations_sync = 2;
-
-ALTER TABLE umami.session_data_pivot
-    DELETE WHERE (website_id, session_id, distinct_id) IN (
-        SELECT website_id, session_id, distinct_id
-        FROM umami.truleaf_proof_session_pivot_keys
-    )
-    SETTINGS mutations_sync = 2;
-
--- Rebuild only affected groups from the now-sanitized base tables. Groups that
--- contained no other property correctly remain absent.
-INSERT INTO umami.event_data_pivot
-SELECT
-    event_data.website_id,
-    event_data.session_id,
-    event_data.event_id,
-    event_data.event_name,
-    event_data.url_path,
-    event_data.created_at,
-    groupArrayState(event_data.data_key),
-    groupArrayState(multiIf(
-        event_data.data_type IN (1, 3, 5), ifNull(event_data.string_value, ''),
-        event_data.data_type = 2, toString(ifNull(event_data.number_value, 0)),
-        event_data.data_type = 4, toString(ifNull(event_data.date_value, toDateTime(0))),
-        ''
-    )),
-    groupArrayState(event_data.data_type)
-FROM umami.event_data AS event_data
-ANY INNER JOIN umami.truleaf_proof_event_pivot_keys AS affected
-    ON affected.website_id = event_data.website_id
-    AND affected.session_id = event_data.session_id
-    AND affected.event_id = event_data.event_id
-    AND affected.event_name = event_data.event_name
-    AND affected.url_path = event_data.url_path
-    AND affected.created_at = event_data.created_at
-WHERE event_data.data_key != 'truleafIdentityProof'
-GROUP BY
-    event_data.website_id,
-    event_data.session_id,
-    event_data.event_id,
-    event_data.event_name,
-    event_data.url_path,
-    event_data.created_at;
-
-INSERT INTO umami.session_data_pivot
-SELECT
-    session_data.website_id,
-    session_data.session_id,
-    ifNull(session_data.distinct_id, '') AS distinct_id,
-    toYYYYMM(max(session_data.created_at)) AS created_year_month,
-    maxState(session_data.created_at),
-    groupArrayState(session_data.data_key),
-    groupArrayState(multiIf(
-        session_data.data_type IN (1, 3, 5), ifNull(session_data.string_value, ''),
-        session_data.data_type = 2, toString(ifNull(session_data.number_value, 0)),
-        session_data.data_type = 4, toString(ifNull(session_data.date_value, toDateTime(0))),
-        ''
-    )),
-    groupArrayState(session_data.data_type)
-FROM (
-    SELECT *
-    FROM umami.session_data FINAL
-) AS session_data
-ANY INNER JOIN umami.truleaf_proof_session_pivot_keys AS affected
-    ON affected.website_id = session_data.website_id
-    AND affected.session_id = session_data.session_id
-    AND affected.distinct_id = ifNull(session_data.distinct_id, '')
-WHERE session_data.data_key != 'truleafIdentityProof'
-GROUP BY session_data.website_id, session_data.session_id, session_data.distinct_id;
-
-DROP TABLE umami.truleaf_proof_event_pivot_keys;
-DROP TABLE umami.truleaf_proof_session_pivot_keys;

@@ -132,8 +132,20 @@ test('GET exposes only masked targets and a Truleaf-verified account label', asy
       {
         type: 'ip',
         targetId: 'opaque-network',
+        banId: 'must-not-reach-browser',
         displayValue: '192.0.x.x',
         banned: false,
+        canUnban: false,
+        sourceMatches: false,
+      },
+      {
+        type: 'ip',
+        targetId: 'opaque-shared-network',
+        displayValue: '198.51.x.x',
+        banned: true,
+        canUnban: false,
+        sourceMatches: false,
+        vercel: 'applied',
       },
     ],
   });
@@ -143,13 +155,31 @@ test('GET exposes only masked targets and a Truleaf-verified account label', asy
 
   expect(body.account).toEqual({
     displayValue: 'user…1234',
+    banned: false,
     canBan: true,
     canUnban: false,
   });
-  expect(body.networks[0].maskedAddress).toBe('192.0.x.x');
+  expect(body.networks[0]).toMatchObject({
+    maskedAddress: '192.0.x.x',
+    banned: false,
+    canBan: true,
+    canUnban: false,
+    sourceMatches: false,
+  });
+  expect(body.networks[1]).toMatchObject({
+    maskedAddress: '198.51.x.x',
+    banned: true,
+    canBan: false,
+    canUnban: false,
+    sourceMatches: false,
+    vercel: 'applied',
+  });
+  expect(body.status).toBeUndefined();
   expect(JSON.stringify(body)).not.toContain('candidate-user');
   expect(JSON.stringify(body)).not.toContain('signed-proof');
   expect(JSON.stringify(body)).not.toContain('192.0.2.10');
+  expect(JSON.stringify(body)).not.toContain('opaque-network');
+  expect(JSON.stringify(body)).not.toContain('must-not-reach-browser');
   expect(getIdentityProofMock).toHaveBeenCalledWith('website-1', 'session-1');
 });
 
@@ -163,6 +193,8 @@ test('GET keeps anonymous IP moderation available for a forged distinctId withou
         targetId: 'opaque-network',
         displayValue: '192.0.x.x',
         banned: false,
+        canUnban: false,
+        sourceMatches: false,
       },
     ],
   });
@@ -173,6 +205,7 @@ test('GET keeps anonymous IP moderation available for a forged distinctId withou
   expect(response.status).toBe(200);
   expect(body.account).toEqual({
     displayValue: 'Unverified account candidate',
+    banned: false,
     canBan: false,
     canUnban: false,
   });
@@ -206,6 +239,8 @@ test('GET chunks more than ten retained targets and combines their status', asyn
             targetId: `opaque-${target.value}`,
             displayValue: '198.51.x.x',
             banned: false,
+            canUnban: false,
+            sourceMatches: false,
           },
     ),
   }));
@@ -215,7 +250,8 @@ test('GET chunks more than ten retained targets and combines their status', asyn
 
   expect(response.status).toBe(200);
   expect(body.networks).toHaveLength(11);
-  expect(body.status.targets).toHaveLength(12);
+  expect(body.status).toBeUndefined();
+  expect(body.networks.every((network: any) => network.canBan === true)).toBe(true);
   expect(requestServiceMock).toHaveBeenCalledTimes(2);
   expect(
     requestServiceMock.mock.calls.every(
@@ -224,7 +260,7 @@ test('GET chunks more than ten retained targets and combines their status', asyn
   ).toBe(true);
 });
 
-test('POST resolves only explicitly selected opaque network IDs', async () => {
+test('POST resolves only explicitly selected opaque network IDs after checking current status', async () => {
   parseRequestMock.mockResolvedValue({
     auth: { user: { id: 'operator-1' } },
     body: {
@@ -235,20 +271,32 @@ test('POST resolves only explicitly selected opaque network IDs', async () => {
       reason: 'Policy decision',
     },
   });
-  requestServiceMock.mockResolvedValue({
-    operationId: 'operation-1',
-    requestId: '33333333-3333-4333-8333-333333333333',
-    status: 'applied',
-    targets: [
-      {
-        type: 'ip',
-        displayValue: '198.51.x.x',
-        status: 'applied',
-        api: 'applied',
-        vercel: 'applied',
-      },
-    ],
-  });
+  requestServiceMock
+    .mockResolvedValueOnce({
+      targets: [
+        {
+          type: 'ip',
+          displayValue: '198.51.x.x',
+          banned: false,
+          canUnban: false,
+          sourceMatches: false,
+        },
+      ],
+    })
+    .mockResolvedValueOnce({
+      operationId: 'operation-1',
+      requestId: '33333333-3333-4333-8333-333333333333',
+      status: 'applied',
+      targets: [
+        {
+          type: 'ip',
+          displayValue: '198.51.x.x',
+          status: 'applied',
+          api: 'applied',
+          vercel: 'applied',
+        },
+      ],
+    });
 
   const response = await POST(
     new Request('http://localhost/moderation', { method: 'POST', body: '{}' }),
@@ -256,11 +304,11 @@ test('POST resolves only explicitly selected opaque network IDs', async () => {
   );
 
   expect(response.status).toBe(200);
-  expect(requestServiceMock).toHaveBeenCalledTimes(1);
-  expect(requestServiceMock.mock.calls[0][0].body).toMatchObject({
+  expect(requestServiceMock).toHaveBeenCalledTimes(2);
+  expect(requestServiceMock.mock.calls[1][0].body).toMatchObject({
     targets: [{ type: 'ip', value: '198.51.100.20' }],
   });
-  expect(JSON.stringify(requestServiceMock.mock.calls[0][0].body)).not.toContain('192.0.2.10');
+  expect(JSON.stringify(requestServiceMock.mock.calls[1][0].body)).not.toContain('192.0.2.10');
 });
 
 test('POST accepts one account plus nine explicitly selected networks', async () => {
@@ -471,5 +519,144 @@ test('POST refuses account unban without a source-bound ban ID', async () => {
   );
 
   expect(response.status).toBe(401);
+  expect(requestServiceMock).toHaveBeenCalledTimes(1);
+});
+
+test('POST unbans an IP only with the server-side source-matched opaque ban ID', async () => {
+  parseRequestMock.mockResolvedValue({
+    auth: { user: { id: 'operator-1' } },
+    body: {
+      requestId: '33333333-3333-4333-8333-333333333333',
+      action: 'unban',
+      targetTypes: ['ip'],
+      networkIds: ['11111111-1111-4111-8111-111111111111'],
+    },
+  });
+  requestServiceMock
+    .mockResolvedValueOnce({
+      targets: [
+        {
+          type: 'ip',
+          targetId: 'opaque-network',
+          banId: 'source-bound-ban-id',
+          displayValue: '192.0.x.x',
+          banned: true,
+          canUnban: true,
+          sourceMatches: true,
+          vercel: 'applied',
+        },
+      ],
+    })
+    .mockResolvedValueOnce({
+      operationId: 'operation-1',
+      requestId: '33333333-3333-4333-8333-333333333333',
+      status: 'applied',
+      targets: [
+        {
+          type: 'ip',
+          displayValue: '192.0.x.x',
+          status: 'applied',
+          api: 'applied',
+          vercel: 'applied',
+        },
+      ],
+    });
+
+  const response = await POST(
+    new Request('http://localhost/moderation', { method: 'POST', body: '{}' }),
+    context,
+  );
+  const body = await response.json();
+
+  expect(response.status).toBe(200);
+  expect(requestServiceMock).toHaveBeenCalledTimes(2);
+  expect(requestServiceMock.mock.calls[1][0].body).toMatchObject({
+    action: 'unban',
+    targets: [
+      {
+        type: 'ip',
+        value: '192.0.2.10',
+        banId: 'source-bound-ban-id',
+      },
+    ],
+  });
+  expect(JSON.stringify(body)).not.toContain('192.0.2.10');
+  expect(JSON.stringify(body)).not.toContain('source-bound-ban-id');
+  expect(JSON.stringify(body)).not.toContain('signed-proof');
+});
+
+test('POST refuses cross-session unban of an active ban on the same shared IP', async () => {
+  parseRequestMock.mockResolvedValue({
+    auth: { user: { id: 'operator-1' } },
+    body: {
+      requestId: '33333333-3333-4333-8333-333333333333',
+      action: 'unban',
+      targetTypes: ['ip'],
+      networkIds: ['11111111-1111-4111-8111-111111111111'],
+    },
+  });
+  requestServiceMock.mockResolvedValue({
+    targets: [
+      {
+        type: 'ip',
+        targetId: 'opaque-network',
+        displayValue: '192.0.x.x',
+        banned: true,
+        canUnban: false,
+        sourceMatches: false,
+        vercel: 'applied',
+      },
+    ],
+  });
+
+  const response = await POST(
+    new Request('http://localhost/moderation', { method: 'POST', body: '{}' }),
+    context,
+  );
+  const body = await response.json();
+
+  expect(response.status).toBe(401);
+  expect(body.error.message).toContain('did not originate from this Umami session');
+  expect(requestServiceMock).toHaveBeenCalledTimes(1);
+  expect(JSON.stringify(body)).not.toContain('192.0.2.10');
+  expect(JSON.stringify(body)).not.toContain('signed-proof');
+});
+
+test('POST refuses to ban an IP that already has an active ban', async () => {
+  parseRequestMock.mockResolvedValue({
+    auth: { user: { id: 'operator-1' } },
+    body: {
+      requestId: '33333333-3333-4333-8333-333333333333',
+      action: 'ban',
+      targetTypes: ['ip'],
+      networkIds: ['11111111-1111-4111-8111-111111111111'],
+      reason: 'Policy decision',
+    },
+  });
+  requestServiceMock.mockResolvedValue({
+    targets: [
+      {
+        type: 'ip',
+        targetId: 'opaque-network',
+        displayValue: '192.0.x.x',
+        banned: true,
+        canUnban: false,
+        sourceMatches: false,
+        vercel: 'applied',
+      },
+    ],
+  });
+
+  const response = await POST(
+    new Request('http://localhost/moderation', { method: 'POST', body: '{}' }),
+    context,
+  );
+
+  expect(response.status).toBe(400);
+  expect(await response.json()).toMatchObject({
+    error: {
+      message: 'An active ban already exists for a selected network',
+    },
+  });
   expect(requestServiceMock).toHaveBeenCalledTimes(1);
 });

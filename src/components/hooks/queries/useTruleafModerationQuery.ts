@@ -1,9 +1,15 @@
 import { useQueryClient } from '@tanstack/react-query';
-import type { ModerationActionResponse, ModerationStatusResponse } from '@/lib/truleaf/service';
+import type { ModerationActionResponse } from '@/lib/truleaf/service';
 import { useApi } from '../useApi';
 
 export interface TruleafModerationData {
-  account: { displayValue: string; canBan: boolean; canUnban: boolean } | null;
+  account: {
+    displayValue: string;
+    banned: boolean;
+    canBan: boolean;
+    canUnban: boolean;
+    expiresAt?: string | null;
+  } | null;
   networks: Array<{
     id: string;
     maskedAddress: string;
@@ -11,8 +17,13 @@ export interface TruleafModerationData {
     firstSeenAt: string;
     lastSeenAt: string;
     expiresAt: string;
+    banned: boolean;
+    canBan: boolean;
+    canUnban: boolean;
+    sourceMatches: boolean;
+    banExpiresAt?: string | null;
+    vercel: 'applied' | 'pending' | 'failed' | 'not_applicable';
   }>;
-  status: ModerationStatusResponse;
 }
 
 export function useTruleafModerationQuery(websiteId: string, sessionId: string) {

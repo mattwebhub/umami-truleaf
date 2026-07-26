@@ -7,7 +7,7 @@ const REQUEST_TIMEOUT_MS = 10_000;
 export type ModerationTarget =
   | { type: 'account'; value: string; proof: string }
   | { type: 'account'; value: string; banId: string }
-  | { type: 'ip'; value: string };
+  | { type: 'ip'; value: string; banId?: string };
 
 export interface ModerationSource {
   system: 'umami';
@@ -29,6 +29,7 @@ export const moderationTargetStatusSchema = z.object({
   banned: z.boolean(),
   canBan: z.boolean().optional(),
   canUnban: z.boolean().optional(),
+  sourceMatches: z.boolean().optional(),
   expiresAt: z.iso.datetime().nullable().optional(),
   vercel: z.enum(['applied', 'pending', 'failed', 'not_applicable']).optional(),
 });

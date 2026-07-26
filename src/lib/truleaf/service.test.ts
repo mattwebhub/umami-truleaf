@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
   createTruleafServiceSignature,
+  moderationActionSchema,
   moderationStatusSchema,
   requestTruleafModeration,
 } from './service';
@@ -57,11 +58,13 @@ describe('Truleaf service response boundary', () => {
           data: {
             targets: [
               {
-                type: 'account',
-                targetId: 'opaque-1',
-                displayValue: 'user…1234',
-                banned: false,
-                canBan: true,
+                type: 'ip',
+                targetId: 'opaque-network',
+                banId: 'source-bound-ban-id',
+                displayValue: '192.0.x.x',
+                banned: true,
+                canUnban: true,
+                sourceMatches: true,
                 value: 'must-not-cross-the-boundary',
                 proof: 'must-not-cross-the-boundary',
               },
@@ -81,11 +84,64 @@ describe('Truleaf service response boundary', () => {
     ).resolves.toEqual({
       targets: [
         {
-          type: 'account',
-          targetId: 'opaque-1',
-          displayValue: 'user…1234',
-          banned: false,
-          canBan: true,
+          type: 'ip',
+          targetId: 'opaque-network',
+          banId: 'source-bound-ban-id',
+          displayValue: '192.0.x.x',
+          banned: true,
+          canUnban: true,
+          sourceMatches: true,
+        },
+      ],
+    });
+  });
+
+  test('strips source-bound ban IDs and raw values from action responses', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        Response.json({
+          success: true,
+          data: {
+            operationId: 'operation-1',
+            requestId: 'request-1',
+            status: 'applied',
+            targets: [
+              {
+                type: 'ip',
+                targetId: 'opaque-network',
+                banId: 'must-not-reach-browser',
+                displayValue: '192.0.x.x',
+                value: '192.0.2.10',
+                proof: 'must-not-reach-browser',
+                status: 'applied',
+                api: 'applied',
+                vercel: 'applied',
+              },
+            ],
+          },
+        }),
+      ),
+    );
+
+    await expect(
+      requestTruleafModeration({
+        path: '/api/v1/internal/moderation/actions',
+        body: { targets: [] },
+        schema: moderationActionSchema,
+      }),
+    ).resolves.toEqual({
+      operationId: 'operation-1',
+      requestId: 'request-1',
+      status: 'applied',
+      targets: [
+        {
+          type: 'ip',
+          targetId: 'opaque-network',
+          displayValue: '192.0.x.x',
+          status: 'applied',
+          api: 'applied',
+          vercel: 'applied',
         },
       ],
     });

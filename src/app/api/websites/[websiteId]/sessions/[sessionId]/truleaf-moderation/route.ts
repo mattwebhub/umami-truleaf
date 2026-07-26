@@ -139,6 +139,10 @@ function getAccountDisplayValue(status: ModerationStatusResponse) {
   return getAccountStatus(status)?.displayValue;
 }
 
+function getNetworkStatuses(status: ModerationStatusResponse) {
+  return status.targets.filter(target => target.type === 'ip');
+}
+
 async function getTargetStatus(
   targets: ModerationTarget[],
   source: ModerationSource,
@@ -177,26 +181,45 @@ export async function GET(request: Request, context: RouteContext) {
       identityProof,
     );
     const status = targets.length ? await getTargetStatus(targets, source) : { targets: [] };
+    const accountStatus = getAccountStatus(status);
+    const networkStatuses = getNetworkStatuses(status);
 
     return json({
       account: session.distinctId
         ? {
             displayValue: getAccountDisplayValue(status) ?? 'Unverified account candidate',
-            canBan: getAccountStatus(status)?.canBan === true,
-            canUnban: getAccountStatus(status)?.canUnban === true,
+            banned: accountStatus?.banned === true,
+            canBan: accountStatus?.canBan === true,
+            canUnban: accountStatus?.canUnban === true,
+            expiresAt: accountStatus?.expiresAt,
           }
         : null,
       networks: networks.map(
-        ({ id, maskedAddress, addressFamily, firstSeenAt, lastSeenAt, expiresAt }) => ({
-          id,
-          maskedAddress,
-          addressFamily,
-          firstSeenAt,
-          lastSeenAt,
-          expiresAt,
-        }),
+        ({ id, maskedAddress, addressFamily, firstSeenAt, lastSeenAt, expiresAt }, index) => {
+          const targetStatus = networkStatuses[index];
+          const banned = targetStatus?.banned === true;
+          const sourceMatches = targetStatus?.sourceMatches === true;
+
+          return {
+            id,
+            maskedAddress,
+            addressFamily,
+            firstSeenAt,
+            lastSeenAt,
+            expiresAt,
+            banned,
+            canBan: Boolean(targetStatus) && !banned,
+            canUnban:
+              banned &&
+              sourceMatches &&
+              targetStatus?.canUnban === true &&
+              Boolean(targetStatus?.banId),
+            sourceMatches,
+            banExpiresAt: targetStatus?.expiresAt,
+            vercel: targetStatus?.vercel ?? 'not_applicable',
+          };
+        },
       ),
-      status,
     });
   } catch (error) {
     return serverError(error);
@@ -219,7 +242,7 @@ export async function POST(request: Request, context: RouteContext) {
 
     const { auth, session, networks, identityProof, source } = resolved;
     const { requestId, action, targetTypes, networkIds, reason, expiresAt } = parsed.body;
-    let targets = resolveTargets(session, networks, targetTypes, networkIds, identityProof);
+    const targets = resolveTargets(session, networks, targetTypes, networkIds, identityProof);
 
     if (!targets.length) {
       return badRequest({ message: 'None of the selected target types are available' });
@@ -231,30 +254,67 @@ export async function POST(request: Request, context: RouteContext) {
       });
     }
 
-    if (targetTypes.includes('account')) {
-      const status = await getTargetStatus(targets, source);
+    const status = await getTargetStatus(targets, source);
+    const authorizedTargets: ModerationTarget[] = [];
 
-      const accountStatus = getAccountStatus(status);
-      const permitted =
-        action === 'ban' ? accountStatus?.canBan === true : accountStatus?.canUnban === true;
+    for (const [index, target] of targets.entries()) {
+      const targetStatus = status.targets[index];
 
-      if (!permitted || (action === 'unban' && !accountStatus?.banId)) {
+      if (!targetStatus || targetStatus.type !== target.type) {
         return unauthorized({
-          message: `Truleaf has not authorized this account ${action} action`,
+          message: 'Truleaf did not authorize the selected moderation target',
         });
       }
 
-      if (action === 'unban') {
-        targets = targets.map(target =>
-          target.type === 'account'
+      if (target.type === 'account') {
+        const permitted =
+          action === 'ban' ? targetStatus.canBan === true : targetStatus.canUnban === true;
+        const banId = targetStatus.banId;
+
+        if (!permitted || (action === 'unban' && !banId)) {
+          return unauthorized({
+            message: `Truleaf has not authorized this account ${action} action`,
+          });
+        }
+
+        authorizedTargets.push(
+          action === 'unban'
             ? {
-                type: 'account' as const,
+                type: 'account',
                 value: target.value,
-                banId: accountStatus.banId,
+                banId,
               }
             : target,
         );
+        continue;
       }
+
+      if (action === 'ban') {
+        if (targetStatus.banned) {
+          return badRequest({
+            message: 'An active ban already exists for a selected network',
+          });
+        }
+        authorizedTargets.push(target);
+        continue;
+      }
+
+      if (
+        !targetStatus.banned ||
+        targetStatus.sourceMatches !== true ||
+        targetStatus.canUnban !== true ||
+        !targetStatus.banId
+      ) {
+        return unauthorized({
+          message: 'The selected network ban did not originate from this Umami session',
+        });
+      }
+
+      authorizedTargets.push({
+        type: 'ip',
+        value: target.value,
+        banId: targetStatus.banId,
+      });
     }
 
     const result = await requestTruleafModeration({
@@ -262,7 +322,7 @@ export async function POST(request: Request, context: RouteContext) {
       body: {
         requestId,
         action,
-        targets,
+        targets: authorizedTargets,
         reason,
         expiresAt,
         source,

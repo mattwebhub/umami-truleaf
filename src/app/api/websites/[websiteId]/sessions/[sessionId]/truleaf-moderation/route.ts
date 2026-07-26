@@ -1,7 +1,11 @@
 import { z } from 'zod';
 import { parseRequest } from '@/lib/request';
 import { badRequest, json, notFound, serverError, unauthorized } from '@/lib/response';
-import { isTruleafModerationEnabled, isTruleafWebsite } from '@/lib/truleaf/config';
+import {
+  isTruleafModerationEnabled,
+  isTruleafModerationOperator,
+  isTruleafWebsite,
+} from '@/lib/truleaf/config';
 import { TRULEAF_MODERATION_TARGET_LIMIT } from '@/lib/truleaf/constants';
 import {
   type ModerationSource,
@@ -81,6 +85,7 @@ async function resolveContext(request: Request, context: RouteContext) {
     !isTruleafModerationEnabled() ||
     !isTruleafWebsite(websiteId) ||
     !auth?.user ||
+    !isTruleafModerationOperator(auth.user.id) ||
     !(await canUpdateWebsite(auth, websiteId))
   ) {
     return { error: unauthorized() };

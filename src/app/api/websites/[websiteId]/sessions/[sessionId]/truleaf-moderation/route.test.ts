@@ -12,6 +12,7 @@ vi.mock('@/lib/request', () => ({
 
 vi.mock('@/lib/truleaf/config', () => ({
   isTruleafModerationEnabled: () => true,
+  isTruleafModerationOperator: vi.fn(() => true),
   isTruleafWebsite: () => true,
 }));
 
@@ -106,6 +107,18 @@ test('GET rejects an authenticated read-only website member', async () => {
   const response = await GET(new Request('http://localhost/moderation'), context);
 
   expect(response.status).toBe(401);
+  expect(requestServiceMock).not.toHaveBeenCalled();
+});
+
+test('GET rejects a website editor outside the moderation operator allowlist', async () => {
+  const { isTruleafModerationOperator } = await import('@/lib/truleaf/config');
+  vi.mocked(isTruleafModerationOperator).mockReturnValueOnce(false);
+  parseRequestMock.mockResolvedValue({ auth: { user: { id: 'editor-1' } } });
+
+  const response = await GET(new Request('http://localhost/moderation'), context);
+
+  expect(response.status).toBe(401);
+  expect(canUpdateWebsiteMock).not.toHaveBeenCalled();
   expect(requestServiceMock).not.toHaveBeenCalled();
 });
 

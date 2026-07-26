@@ -44,7 +44,9 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "seed-data": "tsx scripts/seed-data.ts",
+    "cleanup-truleaf-network": "tsx scripts/cleanup-truleaf-network.ts",
     "lint": "biome lint .",
+    "check:truleaf": "biome check src/lib/truleaf src/queries/prisma/truleafSessionNetwork.ts src/app/api/send/route.ts src/app/api/cron/truleaf-network-retention \"src/app/api/websites/[websiteId]/sessions/[sessionId]/truleaf-moderation\" \"src/app/(main)/websites/[websiteId]/sessions/TruleafModerationPanel.tsx\" \"src/app/(main)/websites/[websiteId]/sessions/TruleafModerationPanel.test.tsx\" src/components/hooks/queries/useTruleafModerationQuery.ts scripts/cleanup-truleaf-network.ts prisma/schema.prisma",
     "format": "biome format --write .",
     "check": "biome check --write"
   },

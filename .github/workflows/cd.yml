@@ -2,126 +2,137 @@ name: Create docker images
 
 on:
   push:
+    branches:
+      - feat/truleaf-moderation
     tags:
       - "v*.*.*"
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "Optional image version (e.g. 3.0.0, v3.0.0, or 3.0.0-beta.1)"
-        required: false
-        default: ""
-      include_latest:
-        description: "Include latest tag"
-        required: false
-        type: boolean
-        default: true
+
+concurrency:
+  group: immutable-image-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  validate:
+    name: Validate fork
+    runs-on: ubuntu-24.04
+    env:
+      DATABASE_URL: "postgresql://user:pass@localhost:5432/dummy"
+      SKIP_DB_CHECK: 1
+    steps:
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 10.15.1
+          run_install: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: "pnpm"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build-db
+      - run: pnpm check:truleaf
+      - run: pnpm test
+      - run: pnpm exec tsc --noEmit
+
   build:
-    name: Build, push, and deploy
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    name: Build and push immutable image
+    needs: validate
+    uses: docker/github-builder/.github/workflows/build.yml@3415a188caae9a0da7fba83bc06985776e0b1790 # v1
     permissions:
       contents: read
       packages: write
-
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log into GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
+      id-token: write
+    with:
+      output: image
+      push: true
+      platforms: linux/amd64,linux/arm64
+      context: .
+      cache: true
+      cache-mode: max
+      cache-scope: umami-truleaf
+      sbom: true
+      sign: true
+      meta-images: ghcr.io/${{ github.repository }}
+      # Registry tags are discovery pointers, not release identities. Production
+      # deployments must consume the verified digest returned by this job.
+      meta-tags: |
+        type=ref,event=branch
+        type=semver,pattern={{version}}
+        type=sha,format=long,prefix=sha-
+      set-meta-labels: true
+      set-meta-annotations: true
+    secrets:
+      github-token: ${{ secrets.GITHUB_TOKEN }}
+      registry-auths: |
+        - registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Log into Docker Hub
-        if: github.repository == 'umami-software/umami'
-        uses: docker/login-action@v3
-        with:
-          registry: docker.io
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Compute version tags
-        id: compute
+  verify-image:
+    name: Verify immutable image evidence
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Validate build outputs
+        env:
+          IMAGE_DIGEST: ${{ needs.build.outputs.digest }}
+          IMAGE_SIGNED: ${{ needs.build.outputs.signed }}
+          VERIFY_COMMANDS: ${{ needs.build.outputs.cosign-verify-commands }}
         run: |
-          INPUT="${{ github.event.inputs.version }}"
-          REF_TYPE="${{ github.ref_type }}"
-          REF_NAME="${{ github.ref_name }}"
-          INCLUDE_LATEST="${{ github.event.inputs.include_latest }}"
+          [[ "$IMAGE_SIGNED" == "true" ]]
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ -n "$VERIFY_COMMANDS" ]]
 
-          # Determine version source
-          if [[ -n "$INPUT" ]]; then
-            VERSION="${INPUT#v}"
-          elif [[ "$REF_TYPE" == "tag" ]]; then
-            VERSION="${REF_NAME#v}"
-          else
-            VERSION=""
-          fi
-
-          GHCR_TAGS=""
-          DOCKER_TAGS=""
-
-          if [[ -n "$VERSION" ]]; then
-            MAJOR=$(echo "$VERSION" | cut -d. -f1)
-            MINOR=$(echo "$VERSION" | cut -d. -f2)
-
-            if [[ "$VERSION" == *-* ]]; then
-              # prerelease: only version tag
-              GHCR_TAGS="ghcr.io/${{ github.repository }}:$VERSION"
-              DOCKER_TAGS="umamisoftware/umami:$VERSION"
-            else
-              # stable release: version + hierarchy
-              GHCR_TAGS="ghcr.io/${{ github.repository }}:$VERSION"
-              GHCR_TAGS="$GHCR_TAGS,ghcr.io/${{ github.repository }}:${MAJOR}.${MINOR}"
-              GHCR_TAGS="$GHCR_TAGS,ghcr.io/${{ github.repository }}:${MAJOR}"
-              GHCR_TAGS="$GHCR_TAGS,ghcr.io/${{ github.repository }}:postgresql-latest"
-          
-              DOCKER_TAGS="umamisoftware/umami:$VERSION"
-              DOCKER_TAGS="$DOCKER_TAGS,umamisoftware/umami:${MAJOR}.${MINOR}"
-              DOCKER_TAGS="$DOCKER_TAGS,umamisoftware/umami:${MAJOR}"
-              DOCKER_TAGS="$DOCKER_TAGS,umamisoftware/umami:postgresql-latest"
-          
-              # Add latest tag based on trigger and input
-              if [[ "$REF_TYPE" == "tag" ]] || [[ "$INCLUDE_LATEST" == "true" ]]; then
-                GHCR_TAGS="$GHCR_TAGS,ghcr.io/${{ github.repository }}:latest"
-                DOCKER_TAGS="$DOCKER_TAGS,umamisoftware/umami:latest"
-              fi
-            fi
-          else
-            # Non-tag build (e.g. from main branch)
-            GHCR_TAGS="ghcr.io/${{ github.repository }}:${REF_NAME}"
-            DOCKER_TAGS="umamisoftware/umami:${REF_NAME}"
-          fi
-
-          echo "ghcr_tags=$GHCR_TAGS" >> $GITHUB_OUTPUT
-          echo "docker_tags=$DOCKER_TAGS" >> $GITHUB_OUTPUT
-          echo "Computed GHCR tags: $GHCR_TAGS"
-          echo "Computed Docker Hub tags: $DOCKER_TAGS"
-
-      - name: Build and push to GHCR
-        uses: docker/build-push-action@v5
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
         with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.compute.outputs.ghcr_tags }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cosign-release: ${{ needs.build.outputs.cosign-version }}
 
-      - name: Build and push to Docker Hub
-        if: github.repository == 'umami-software/umami'
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.compute.outputs.docker_tags }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Log into GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" |
+            docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Verify signatures, provenance, and SBOM
+        env:
+          VERIFY_COMMANDS: ${{ needs.build.outputs.cosign-verify-commands }}
+        run: |
+          while IFS= read -r verify_line; do
+            [[ "$verify_line" == "cosign verify"* ]]
+            read -r -a verify_args <<< "$verify_line"
+            [[ "${verify_args[0]}" == "cosign" ]]
+            "${verify_args[@]}"
+          done <<< "$VERIFY_COMMANDS"
+
+      - name: Verify manifest platforms
+        env:
+          IMAGE_DIGEST: ${{ needs.build.outputs.digest }}
+          IMAGE_NAME: ghcr.io/${{ github.repository }}
+        run: |
+          manifest_json="$(
+            docker buildx imagetools inspect --raw "$IMAGE_NAME@$IMAGE_DIGEST"
+          )"
+          jq -e '
+            any(.manifests[]; .platform.os == "linux" and .platform.architecture == "amd64") and
+            any(.manifests[]; .platform.os == "linux" and .platform.architecture == "arm64")
+          ' <<< "$manifest_json"
+
+      - name: Record release evidence
+        env:
+          IMAGE_DIGEST: ${{ needs.build.outputs.digest }}
+          IMAGE_NAME: ghcr.io/${{ github.repository }}
+        run: |
+          {
+            echo "### Immutable image"
+            echo
+            echo "\`$IMAGE_NAME@$IMAGE_DIGEST\`"
+            echo
+            echo "- Native platforms: linux/amd64, linux/arm64"
+            echo "- Cosign signatures and attestations: verified"
+            echo "- SBOM: generated and signed"
+          } >> "$GITHUB_STEP_SUMMARY"

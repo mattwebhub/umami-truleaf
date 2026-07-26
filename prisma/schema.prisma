@@ -97,6 +97,28 @@ model Website {
   @@map("website")
 }
 
+/// Truleaf-only, encrypted network observations used by the moderation integration.
+/// This table is deliberately separate from Umami's core session model so the fork can
+/// be rolled back to an upstream image without changing upstream analytics data.
+model TruleafSessionNetwork {
+  id                   String   @id() @map("network_id") @db.Uuid
+  websiteId            String   @map("website_id") @db.Uuid
+  sessionId            String   @map("session_id") @db.Uuid
+  ipHmac               String   @map("ip_hmac") @db.Char(64)
+  ipCiphertext         Bytes    @map("ip_ciphertext")
+  nonce                Bytes
+  encryptionKeyVersion String   @map("encryption_key_version") @db.VarChar(32)
+  addressFamily        Int      @map("address_family") @db.SmallInt
+  firstSeenAt          DateTime @default(now()) @map("first_seen_at") @db.Timestamptz(6)
+  lastSeenAt           DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  expiresAt            DateTime @map("expires_at") @db.Timestamptz(6)
+
+  @@unique([websiteId, sessionId, ipHmac])
+  @@index([websiteId, sessionId])
+  @@index([expiresAt])
+  @@map("truleaf_session_network")
+}
+
 model WebsiteEvent {
   id             String    @id() @map("event_id") @db.Uuid
   websiteId      String    @map("website_id") @db.Uuid

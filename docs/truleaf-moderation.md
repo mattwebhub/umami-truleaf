@@ -46,6 +46,8 @@ Encryption and blind-index keys must be independently generated. Do not reuse
   authenticated Truleaf backend; Truleaf verifies the proof again before acting.
 - The browser selects opaque network-record IDs. The server resolves and
   decrypts them; raw addresses never enter browser requests or responses.
+- Session moderation loads at most the 50 most recently observed, unexpired
+  networks. Operators can select at most 10 total targets per action.
 - Share tokens cannot use moderation APIs. The operator's Umami user UUID must
   be explicitly listed in `TRULEAF_MODERATION_OPERATOR_IDS` and the operator
   must also have update access to the website. An administrator is not exempt

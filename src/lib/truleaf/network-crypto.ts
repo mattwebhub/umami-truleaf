@@ -14,9 +14,12 @@ export interface EncryptedNetworkAddress {
   family: 4 | 6;
 }
 
-interface Keyring {
+interface EncryptionKeyring {
   activeVersion: string;
   encryptionKeys: Map<string, Buffer>;
+}
+
+interface Keyring extends EncryptionKeyring {
   hmacKey: Buffer;
 }
 
@@ -30,7 +33,7 @@ function decodeKey(value: string, name: string) {
   return key;
 }
 
-function loadKeyring(): Keyring {
+export function loadTruleafEncryptionKeyring(): EncryptionKeyring {
   const entries = (process.env.TRULEAF_NETWORK_ENCRYPTION_KEYS ?? '')
     .split(',')
     .map(value => value.trim())
@@ -55,17 +58,21 @@ function loadKeyring(): Keyring {
     throw new Error('TRULEAF_NETWORK_ENCRYPTION_KEYS contains a duplicate key version');
   }
 
-  const hmacKey = decodeKey(process.env.TRULEAF_NETWORK_HMAC_KEY ?? '', 'TRULEAF_NETWORK_HMAC_KEY');
-
-  if (entries.some(([, key]) => key.equals(hmacKey))) {
-    throw new Error('Truleaf network encryption and HMAC keys must be different');
-  }
-
   return {
     activeVersion: entries[0][0],
     encryptionKeys: new Map(entries),
-    hmacKey,
   };
+}
+
+function loadKeyring(): Keyring {
+  const encryption = loadTruleafEncryptionKeyring();
+  const hmacKey = decodeKey(process.env.TRULEAF_NETWORK_HMAC_KEY ?? '', 'TRULEAF_NETWORK_HMAC_KEY');
+
+  if ([...encryption.encryptionKeys.values()].some(key => key.equals(hmacKey))) {
+    throw new Error('Truleaf network encryption and HMAC keys must be different');
+  }
+
+  return { ...encryption, hmacKey };
 }
 
 export function normalizeNetworkAddress(value: string) {

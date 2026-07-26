@@ -1,9 +1,17 @@
 import prisma from '@/lib/prisma';
-import { deleteExpiredTruleafSessionNetworks } from '@/queries/prisma';
+import {
+  deleteExpiredTruleafSessionIdentities,
+  deleteExpiredTruleafSessionNetworks,
+} from '@/queries/prisma';
 
 async function main() {
-  const result = await deleteExpiredTruleafSessionNetworks();
-  console.log(`Deleted ${result.count} expired Truleaf network mapping(s).`);
+  const [networks, identities] = await Promise.all([
+    deleteExpiredTruleafSessionNetworks(),
+    deleteExpiredTruleafSessionIdentities(),
+  ]);
+  console.log(
+    `Deleted ${networks.count} expired Truleaf network mapping(s) and ${identities.count} identity proof(s).`,
+  );
 }
 
 main()

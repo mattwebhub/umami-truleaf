@@ -2,8 +2,8 @@ import { beforeEach, expect, test, vi } from 'vitest';
 import { parseRequest } from '@/lib/request';
 import { requestTruleafModeration } from '@/lib/truleaf/service';
 import { canUpdateWebsite } from '@/permissions';
-import { getTruleafSessionNetworks } from '@/queries/prisma';
-import { getSessionData, getWebsiteSession } from '@/queries/sql';
+import { getTruleafSessionIdentityProof, getTruleafSessionNetworks } from '@/queries/prisma';
+import { getWebsiteSession } from '@/queries/sql';
 import { GET, POST } from './route';
 
 vi.mock('@/lib/request', () => ({
@@ -26,19 +26,19 @@ vi.mock('@/permissions', () => ({
 }));
 
 vi.mock('@/queries/prisma', () => ({
+  getTruleafSessionIdentityProof: vi.fn(),
   getTruleafSessionNetworks: vi.fn(),
 }));
 
 vi.mock('@/queries/sql', () => ({
-  getSessionData: vi.fn(),
   getWebsiteSession: vi.fn(),
 }));
 
 const parseRequestMock = vi.mocked(parseRequest);
 const requestServiceMock = vi.mocked(requestTruleafModeration);
 const canUpdateWebsiteMock = vi.mocked(canUpdateWebsite);
+const getIdentityProofMock = vi.mocked(getTruleafSessionIdentityProof);
 const getNetworksMock = vi.mocked(getTruleafSessionNetworks);
-const getSessionDataMock = vi.mocked(getSessionData);
 const getWebsiteSessionMock = vi.mocked(getWebsiteSession);
 const context = {
   params: Promise.resolve({ websiteId: 'website-1', sessionId: 'session-1' }),
@@ -60,12 +60,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   canUpdateWebsiteMock.mockResolvedValue(true);
   getWebsiteSessionMock.mockResolvedValue({ distinctId: 'candidate-user' } as any);
-  getSessionDataMock.mockResolvedValue([
-    {
-      dataKey: 'truleafIdentityProof',
-      stringValue: 'signed-proof',
-    },
-  ] as any);
+  getIdentityProofMock.mockResolvedValue('signed-proof');
   getNetworksMock.mockResolvedValue([
     {
       id: '11111111-1111-4111-8111-111111111111',
@@ -155,11 +150,12 @@ test('GET exposes only masked targets and a Truleaf-verified account label', asy
   expect(JSON.stringify(body)).not.toContain('candidate-user');
   expect(JSON.stringify(body)).not.toContain('signed-proof');
   expect(JSON.stringify(body)).not.toContain('192.0.2.10');
+  expect(getIdentityProofMock).toHaveBeenCalledWith('website-1', 'session-1');
 });
 
 test('GET keeps anonymous IP moderation available for a forged distinctId without proof', async () => {
   parseRequestMock.mockResolvedValue({ auth: { user: { id: 'operator-1' } } });
-  getSessionDataMock.mockResolvedValue([]);
+  getIdentityProofMock.mockResolvedValue(undefined);
   requestServiceMock.mockResolvedValue({
     targets: [
       {

@@ -165,6 +165,9 @@ export async function deleteUser(userId: string) {
         },
         where: { id: { in: websiteIds } },
       }),
+      client.truleafSessionIdentity.deleteMany({
+        where: { websiteId: { in: websiteIds } },
+      }),
       client.user.update({
         data: {
           username: getRandomChars(32),
@@ -193,6 +196,9 @@ export async function deleteUser(userId: string) {
 
   return transaction([
     client.eventData.deleteMany({
+      where: { websiteId: { in: websiteIds } },
+    }),
+    client.truleafSessionIdentity.deleteMany({
       where: { websiteId: { in: websiteIds } },
     }),
     client.sessionData.deleteMany({

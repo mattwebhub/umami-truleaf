@@ -15,9 +15,17 @@ import {
   scheduleTruleafNetworkCapture,
   shouldCaptureTruleafNetwork,
 } from '@/lib/truleaf/capture-source';
-import { isTruleafNetworkCaptureEnabled, isTruleafWebsite } from '@/lib/truleaf/config';
+import {
+  isTruleafModerationEnabled,
+  isTruleafNetworkCaptureEnabled,
+  isTruleafWebsite,
+} from '@/lib/truleaf/config';
+import {
+  partitionTruleafIdentityProof,
+  scheduleTruleafIdentityProofStorage,
+} from '@/lib/truleaf/identity-proof';
 import { safeDecodeURI, safeDecodeURIComponent } from '@/lib/url';
-import { recordTruleafSessionNetwork } from '@/queries/prisma';
+import { recordTruleafSessionIdentityProof, recordTruleafSessionNetwork } from '@/queries/prisma';
 import { createSession, saveEvent, saveSessionData } from '@/queries/sql';
 
 interface Cache {
@@ -302,13 +310,32 @@ export async function POST(request: Request) {
       });
     } else if (type === COLLECTION_TYPE.identify) {
       if (data) {
-        await saveSessionData({
-          websiteId,
-          sessionId,
-          sessionData: data,
-          distinctId: id,
-          createdAt,
-        });
+        // This reserved proof is a moderation credential, not analytics data.
+        // Strip it for every website and feature state so it can never reach
+        // generic session properties, exports, or aggregate queries.
+        const { sessionData, proof } = partitionTruleafIdentityProof(data);
+
+        if (
+          proof &&
+          websiteId &&
+          id &&
+          isTruleafModerationEnabled() &&
+          isTruleafWebsite(websiteId)
+        ) {
+          scheduleTruleafIdentityProofStorage(() =>
+            recordTruleafSessionIdentityProof(websiteId, sessionId, id, proof),
+          );
+        }
+
+        if (Object.keys(sessionData).length) {
+          await saveSessionData({
+            websiteId,
+            sessionId,
+            sessionData,
+            distinctId: id,
+            createdAt,
+          });
+        }
       }
     } else if (type === COLLECTION_TYPE.performance) {
       const base = hostname ? `https://${hostname}` : 'https://localhost';

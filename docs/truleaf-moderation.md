@@ -42,8 +42,12 @@ Encryption and blind-index keys must be independently generated. Do not reuse
 - Ingress must remove/overwrite the trusted header. Merely setting the variable
   without enforcing that proxy policy still permits spoofing.
 - `distinctId` is only a display candidate because a browser can forge it.
-  Account actions require `truleafIdentityProof` session data minted by the
-  authenticated Truleaf backend; Truleaf verifies the proof again before acting.
+  Account actions require a `truleafIdentityProof` minted by the authenticated
+  Truleaf backend; Truleaf verifies the proof again before acting.
+- `truleafIdentityProof` is a reserved collector property. The fork strips it
+  before generic `session_data` persistence and stores an encrypted copy in
+  `truleaf_session_identity` only for enabled, allowlisted websites. It is never
+  returned by generic properties APIs, exports, or aggregate reports.
 - The browser selects opaque network-record IDs. The server resolves and
   decrypts them; raw addresses never enter browser requests or responses.
 - Session moderation loads at most the 50 most recently observed, unexpired
@@ -55,11 +59,14 @@ Encryption and blind-index keys must be independently generated. Do not reuse
 
 ## Storage and retention
 
-`truleaf_session_network` is additive and deliberately has no foreign keys or
-Prisma relations to Umami sessions. ClickHouse deployments can have sessions
-without PostgreSQL session rows, so a foreign key would make valid capture fail.
-Expired rows, including orphaned mappings, are removed independently. The
-production image exposes a dedicated, authenticated app-runtime endpoint:
+`truleaf_session_network` and `truleaf_session_identity` are additive and
+deliberately have no foreign keys or Prisma relations to Umami sessions.
+ClickHouse deployments can have sessions without PostgreSQL session rows, so a
+foreign key would make valid capture fail. Identity proofs use their signed JWT
+expiry; network observations use the configured retention period. Expired rows,
+including orphaned mappings, are removed independently. Website reset/deletion
+and owner deletion remove dedicated identity records immediately. The production
+image exposes a dedicated, authenticated app-runtime endpoint:
 
 ```http
 POST /api/cron/truleaf-network-retention
@@ -68,16 +75,19 @@ Authorization: Bearer <TRULEAF_RETENTION_SECRET>
 
 Schedule that endpoint at least daily. `pnpm cleanup-truleaf-network` is also
 available from a source checkout for local operations, but is not the production
-container mechanism. Network ciphertext uses AES-256-GCM with associated
-website/session/key-version data. The authentication tag is appended to the
-ciphertext. HMAC-SHA256 blind indexes allow deduplication without deterministic
-encryption.
+container mechanism. Network and identity-proof ciphertext use AES-256-GCM with
+purpose-separated associated website/session/key-version data. The authentication
+tag is appended to the ciphertext. HMAC-SHA256 blind indexes allow network
+deduplication without deterministic encryption. The historical
+`TRULEAF_NETWORK_ENCRYPTION_KEYS` keyring encrypts both fork-only sensitive
+tables; proofs never use the network blind-index key.
 
 ## Key rotation
 
 1. Prepend a new version and key to `TRULEAF_NETWORK_ENCRYPTION_KEYS`.
 2. Restart all replicas.
-3. Keep old keys until every row using them expires or is re-encrypted.
+3. Keep old keys until every network and identity row using them expires or is
+   re-encrypted.
 4. Rotate `TRULEAF_NETWORK_HMAC_KEY` separately only with a migration that
    recomputes blind indexes; changing it without migration breaks deduplication.
 
@@ -119,12 +129,14 @@ attestations, which the image workflow verifies before it succeeds.
 
 1. Deploy Truleaf proof issuance, moderation API, and enforcement with its
    Umami credential configured.
-2. Back up Umami PostgreSQL and run migration 21.
+2. Back up Umami PostgreSQL and run migrations 21 and 22. Migration 22 deletes
+   legacy `truleafIdentityProof` rows from generic session data rather than
+   trusting and copying browser-provided assertions.
 3. Deploy this image with both feature flags disabled.
 4. Enable capture for one allowlisted staging website and verify retention.
 5. Enable moderation and run anonymous-IP and verified-account E2E tests.
 6. Roll out production website IDs.
 
 To roll back, disable both flags, revoke the service credential, and deploy the
-pinned upstream image. The additive table is ignored by upstream and can remain
-until the retention job or an explicitly reviewed cleanup removes it.
+pinned upstream image. The additive tables are ignored by upstream and can
+remain until the retention job or an explicitly reviewed cleanup removes them.

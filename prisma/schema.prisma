@@ -119,6 +119,23 @@ model TruleafSessionNetwork {
   @@map("truleaf_session_network")
 }
 
+/// Truleaf-only, encrypted account-identity proof used by the moderation bridge.
+/// Proofs never enter Umami's generic session_data model or analytics surfaces.
+model TruleafSessionIdentity {
+  id                   String   @id() @map("identity_id") @db.Uuid
+  websiteId            String   @map("website_id") @db.Uuid
+  sessionId            String   @map("session_id") @db.Uuid
+  proofCiphertext      Bytes    @map("proof_ciphertext")
+  nonce                Bytes
+  encryptionKeyVersion String   @map("encryption_key_version") @db.VarChar(32)
+  expiresAt            DateTime @map("expires_at") @db.Timestamptz(6)
+  updatedAt            DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([websiteId, sessionId])
+  @@index([expiresAt])
+  @@map("truleaf_session_identity")
+}
+
 model WebsiteEvent {
   id             String    @id() @map("event_id") @db.Uuid
   websiteId      String    @map("website_id") @db.Uuid

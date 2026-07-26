@@ -16,8 +16,8 @@ import {
   requestTruleafModeration,
 } from '@/lib/truleaf/service';
 import { canUpdateWebsite } from '@/permissions';
-import { getTruleafSessionNetworks } from '@/queries/prisma';
-import { getSessionData, getWebsiteSession } from '@/queries/sql';
+import { getTruleafSessionIdentityProof, getTruleafSessionNetworks } from '@/queries/prisma';
+import { getWebsiteSession } from '@/queries/sql';
 
 const actionSchema = z
   .object({
@@ -97,13 +97,10 @@ async function resolveContext(request: Request, context: RouteContext) {
     return { error: notFound({ message: 'Session not found' }) };
   }
 
-  const [networks, sessionData] = await Promise.all([
+  const [networks, identityProof] = await Promise.all([
     getTruleafSessionNetworks(websiteId, sessionId),
-    getSessionData(websiteId, sessionId),
+    getTruleafSessionIdentityProof(websiteId, sessionId),
   ]);
-  const identityProof = sessionData?.find(
-    ({ dataKey }: { dataKey: string }) => dataKey === 'truleafIdentityProof',
-  )?.stringValue;
   const source: ModerationSource = { system: 'umami', websiteId, sessionId };
 
   return { auth, session, networks, identityProof, source };

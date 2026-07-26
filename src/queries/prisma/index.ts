@@ -7,6 +7,7 @@ export * from './sessionReplay';
 export * from './share';
 export * from './team';
 export * from './teamUser';
+export * from './truleafSessionIdentity';
 export * from './truleafSessionNetwork';
 export * from './user';
 export * from './website';

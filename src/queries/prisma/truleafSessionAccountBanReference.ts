@@ -74,9 +74,41 @@ export async function getTruleafSessionAccountBanReference(
   }
 }
 
-export function deleteTruleafSessionAccountBanReference(websiteId: string, sessionId: string) {
-  return prisma.client.truleafSessionAccountBanReference.deleteMany({
+export async function deleteTruleafSessionAccountBanReference(
+  websiteId: string,
+  sessionId: string,
+  distinctId: string,
+  expectedBanId: string,
+) {
+  const record = await prisma.client.truleafSessionAccountBanReference.findFirst({
     where: { websiteId, sessionId },
+  });
+
+  if (!record) {
+    return { count: 0 };
+  }
+
+  try {
+    const currentBanId = decryptAccountBanReference(
+      record.referenceCiphertext,
+      record.nonce,
+      record.encryptionKeyVersion,
+      websiteId,
+      sessionId,
+      distinctId,
+    );
+
+    if (currentBanId !== expectedBanId) {
+      return { count: 0 };
+    }
+  } catch {
+    return { count: 0 };
+  }
+
+  // Bind deletion to the encrypted record that was verified above. The nonce
+  // guard protects even if overlapping writes receive the same DB timestamp.
+  return prisma.client.truleafSessionAccountBanReference.deleteMany({
+    where: { id: record.id, updatedAt: record.updatedAt, nonce: record.nonce },
   });
 }
 

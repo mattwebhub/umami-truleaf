@@ -230,7 +230,18 @@ export async function GET(request: Request, context: RouteContext) {
       accountStatus.canUnban === true &&
       Boolean(accountStatus.banId);
 
-    if (
+    if (accountBanReference && accountStatus?.banned === false) {
+      // A successful status response for this account is authoritative. Only
+      // remove the local capability when no active ban exists at all; an active
+      // cross-source ban returns banned=true without our source-bound banId and
+      // must not be affected.
+      await deleteTruleafSessionAccountBanReference(
+        source.websiteId,
+        source.sessionId,
+        session.distinctId,
+        accountBanReference,
+      );
+    } else if (
       session.distinctId &&
       accountCanUnban &&
       accountStatus?.banId &&
@@ -416,7 +427,14 @@ export async function POST(request: Request, context: RouteContext) {
           expiresAt ? new Date(expiresAt) : null,
         );
       } else {
-        await deleteTruleafSessionAccountBanReference(source.websiteId, source.sessionId);
+        if (accountBanReference) {
+          await deleteTruleafSessionAccountBanReference(
+            source.websiteId,
+            source.sessionId,
+            session.distinctId,
+            accountBanReference,
+          );
+        }
       }
     }
 

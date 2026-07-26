@@ -79,14 +79,39 @@ test('reads a non-expired reference and fails closed for another account', async
 
 test('deletes a reference after unban and purges explicitly expired references', async () => {
   const now = new Date('2026-07-26T12:00:00Z');
+  await recordTruleafSessionAccountBanReference(websiteId, sessionId, distinctId, banId, null, now);
+  const created = mocks.upsert.mock.calls[0][0].create;
+  mocks.findFirst.mockResolvedValue(created);
 
-  await deleteTruleafSessionAccountBanReference(websiteId, sessionId);
+  await deleteTruleafSessionAccountBanReference(websiteId, sessionId, distinctId, banId);
   await deleteExpiredTruleafSessionAccountBanReferences(now);
 
   expect(mocks.deleteMany).toHaveBeenNthCalledWith(1, {
-    where: { websiteId, sessionId },
+    where: { id: created.id, updatedAt: now, nonce: created.nonce },
   });
   expect(mocks.deleteMany).toHaveBeenNthCalledWith(2, {
     where: { expiresAt: { lte: now } },
   });
+});
+
+test('does not delete a concurrently replaced or mismatched reference', async () => {
+  await recordTruleafSessionAccountBanReference(
+    websiteId,
+    sessionId,
+    distinctId,
+    'new-ban-reference',
+    null,
+  );
+  mocks.findFirst.mockResolvedValue(mocks.upsert.mock.calls[0][0].create);
+
+  await expect(
+    deleteTruleafSessionAccountBanReference(
+      websiteId,
+      sessionId,
+      distinctId,
+      'stale-ban-reference',
+    ),
+  ).resolves.toEqual({ count: 0 });
+
+  expect(mocks.deleteMany).not.toHaveBeenCalled();
 });

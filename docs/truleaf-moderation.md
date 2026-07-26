@@ -73,11 +73,12 @@ have sessions without PostgreSQL session rows, so a foreign key would make valid
 capture fail. Identity proofs use the earlier of their signed JWT expiry and a
 30-day encrypted-storage cap; network observations use the configured retention
 period. Account-ban references contain neither the proof nor the account ID:
-they remain only while an indefinite ban is
-actionable, or until the ban's explicit expiry, successful unban, website
-reset/deletion, or owner deletion. Expired rows, including orphaned mappings,
-are removed independently. The production image exposes a dedicated,
-authenticated app-runtime endpoint:
+they remain only while an indefinite ban is actionable, or until the ban's
+explicit expiry, successful unban, authoritative observation of an external
+unban, website reset/deletion, or owner deletion. Active bans owned by another
+source and transient status failures never delete the local recovery reference.
+Expired rows, including orphaned mappings, are removed independently. The
+production image exposes a dedicated, authenticated app-runtime endpoint:
 
 ```http
 POST /api/cron/truleaf-network-retention
@@ -142,12 +143,14 @@ attestations, which the image workflow verifies before it succeeds.
 
 1. Deploy Truleaf proof issuance, moderation API, and enforcement with its
    Umami credential configured.
-2. Back up Umami PostgreSQL and run migrations 21–23. Migrations 22 and 23
+2. Deploy this image with both feature flags disabled. Proof stripping is
+   unconditional, so this stops new legacy generic rows before cleanup.
+3. Back up Umami PostgreSQL and run migrations 21–23. Migrations 22 and 23
    delete legacy `truleafIdentityProof` rows from generic session and event data
    rather than trusting and copying browser-provided assertions. ClickHouse
-   deployments must also apply migrations 13 and 14 and wait for their
-   synchronous delete mutations.
-3. Deploy this image with both feature flags disabled.
+   deployments must also apply migrations 13 and 14. Migration 14 captures the
+   affected materialized-pivot groups, synchronously deletes base and aggregate
+   state, and rebuilds only their non-proof properties.
 4. Enable capture for one allowlisted staging website and verify retention.
 5. Enable moderation and run anonymous-IP and verified-account E2E tests.
 6. Roll out production website IDs.

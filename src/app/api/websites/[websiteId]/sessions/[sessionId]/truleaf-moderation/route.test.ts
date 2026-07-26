@@ -288,6 +288,80 @@ test('GET exposes account unban only for an active ban with a source-bound ban I
   expect(JSON.stringify(activeBody)).not.toContain('must-not-reach-browser');
 });
 
+test('GET removes a stale permanent account reference after authoritative external unban', async () => {
+  parseRequestMock.mockResolvedValue({ auth: { user: { id: 'operator-1' } } });
+  getIdentityProofMock.mockResolvedValue(undefined);
+  getAccountBanReferenceMock.mockResolvedValue('stale-account-ban');
+  requestServiceMock.mockResolvedValue({
+    targets: [
+      {
+        type: 'account',
+        displayValue: 'user…1234',
+        banned: false,
+        canBan: false,
+        canUnban: false,
+      },
+    ],
+  });
+
+  const response = await GET(new Request('http://localhost/moderation'), context);
+  const body = await response.json();
+
+  expect(response.status).toBe(200);
+  expect((requestServiceMock.mock.calls[0][0].body as any).targets[0]).toEqual({
+    type: 'account',
+    value: 'candidate-user',
+    banId: 'stale-account-ban',
+  });
+  expect(deleteAccountBanReferenceMock).toHaveBeenCalledWith(
+    'website-1',
+    'session-1',
+    'candidate-user',
+    'stale-account-ban',
+  );
+  expect(recordAccountBanReferenceMock).not.toHaveBeenCalled();
+  expect(body.account).toMatchObject({
+    banned: false,
+    canUnban: false,
+  });
+});
+
+test('GET retains its reference when a different source still owns an active account ban', async () => {
+  parseRequestMock.mockResolvedValue({ auth: { user: { id: 'operator-1' } } });
+  getIdentityProofMock.mockResolvedValue(undefined);
+  getAccountBanReferenceMock.mockResolvedValue('previous-account-ban');
+  requestServiceMock.mockResolvedValue({
+    targets: [
+      {
+        type: 'account',
+        displayValue: 'user…1234',
+        banned: true,
+        canBan: false,
+        canUnban: false,
+      },
+    ],
+  });
+
+  const response = await GET(new Request('http://localhost/moderation'), context);
+
+  expect(response.status).toBe(200);
+  expect(deleteAccountBanReferenceMock).not.toHaveBeenCalled();
+  expect(recordAccountBanReferenceMock).not.toHaveBeenCalled();
+});
+
+test('GET retains its reference when authoritative status cannot be obtained', async () => {
+  parseRequestMock.mockResolvedValue({ auth: { user: { id: 'operator-1' } } });
+  getIdentityProofMock.mockResolvedValue(undefined);
+  getAccountBanReferenceMock.mockResolvedValue('recoverable-account-ban');
+  requestServiceMock.mockRejectedValue(new Error('Truleaf unavailable'));
+
+  const response = await GET(new Request('http://localhost/moderation'), context);
+
+  expect(response.status).toBe(500);
+  expect(deleteAccountBanReferenceMock).not.toHaveBeenCalled();
+  expect(recordAccountBanReferenceMock).not.toHaveBeenCalled();
+});
+
 test('GET runs bounded status chunks concurrently and preserves target ordering', async () => {
   parseRequestMock.mockResolvedValue({ auth: { user: { id: 'operator-1' } } });
   getNetworksMock.mockResolvedValue(
@@ -674,7 +748,12 @@ test('POST allows account unban after proof expiry using the persisted source-bo
     targets: [{ type: 'account', value: 'candidate-user', banId: 'ban-account-1' }],
   });
   expect(JSON.stringify(requestServiceMock.mock.calls[1][0].body)).not.toContain('signed-proof');
-  expect(deleteAccountBanReferenceMock).toHaveBeenCalledWith('website-1', 'session-1');
+  expect(deleteAccountBanReferenceMock).toHaveBeenCalledWith(
+    'website-1',
+    'session-1',
+    'candidate-user',
+    'ban-account-1',
+  );
 });
 
 test('POST refuses account unban without a source-bound ban ID', async () => {

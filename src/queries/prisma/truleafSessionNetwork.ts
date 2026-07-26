@@ -2,6 +2,7 @@ import { addDays } from 'date-fns';
 import { uuid } from '@/lib/crypto';
 import prisma from '@/lib/prisma';
 import { getTruleafNetworkRetentionDays } from '@/lib/truleaf/config';
+import { TRULEAF_SESSION_NETWORK_DISPLAY_LIMIT } from '@/lib/truleaf/constants';
 import {
   decryptNetworkAddress,
   encryptNetworkAddress,
@@ -53,6 +54,7 @@ export async function getTruleafSessionNetworks(websiteId: string, sessionId: st
       expiresAt: { gt: new Date() },
     },
     orderBy: { lastSeenAt: 'desc' },
+    take: TRULEAF_SESSION_NETWORK_DISPLAY_LIMIT,
   });
 
   return records.map(record => {

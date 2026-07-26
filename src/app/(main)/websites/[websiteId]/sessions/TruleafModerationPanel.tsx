@@ -60,6 +60,15 @@ export function TruleafModerationPanel({
   const canSubmit =
     (accountSelected && accountAvailable) || (selectedNetworkIds.size > 0 && networkAvailable);
 
+  const changeAction = (nextAction: 'ban' | 'unban') => {
+    if (nextAction === action) return;
+    setAction(nextAction);
+    // Capabilities differ by action. Require a fresh, explicit selection so a
+    // stale Ban target cannot be submitted as an incompatible Unban target.
+    setAccountSelected(false);
+    setSelectedNetworkIds(new Set());
+  };
+
   const handleSubmit = async (values: { reason?: string; expiresAt?: string }) => {
     const targetTypes: Array<'account' | 'ip'> = [];
 
@@ -185,13 +194,13 @@ export function TruleafModerationPanel({
                     <Row gap="3">
                       <Button
                         variant={action === 'ban' ? 'primary' : 'outline'}
-                        onPress={() => setAction('ban')}
+                        onPress={() => changeAction('ban')}
                       >
                         Ban
                       </Button>
                       <Button
                         variant={action === 'unban' ? 'primary' : 'outline'}
-                        onPress={() => setAction('unban')}
+                        onPress={() => changeAction('unban')}
                       >
                         Unban
                       </Button>

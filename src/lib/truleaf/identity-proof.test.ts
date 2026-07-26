@@ -127,6 +127,24 @@ test('rejects expired, mismatched, and implausibly long-lived proof candidates',
   ).toBeUndefined();
 });
 
+test('caps encrypted proof retention at 30 days even for a longer valid JWT', () => {
+  process.env.TRULEAF_NETWORK_ENCRYPTION_KEYS = `v1:${key}`;
+  const now = new Date('2026-07-26T12:00:00Z');
+  const encrypted = encryptIdentityProof(
+    createProof({
+      sub: distinctId,
+      websiteId,
+      exp: Math.floor(now.getTime() / 1000) + 90 * 24 * 60 * 60,
+    }),
+    websiteId,
+    sessionId,
+    distinctId,
+    now,
+  );
+
+  expect(encrypted?.expiresAt).toEqual(new Date('2026-08-25T12:00:00.000Z'));
+});
+
 test('contains asynchronous storage failures without logging proof material', async () => {
   let scheduled: (() => Promise<void>) | undefined;
   const task = vi.fn(async () => {

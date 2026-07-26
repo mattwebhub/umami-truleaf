@@ -65,6 +65,7 @@ const proof = 'header.payload.signature';
 const parseRequestMock = vi.mocked(parseRequest);
 const recordIdentityMock = vi.mocked(recordTruleafSessionIdentityProof);
 const scheduleIdentityMock = vi.mocked(scheduleTruleafIdentityProofStorage);
+const saveEventMock = vi.mocked(saveEvent);
 const saveSessionDataMock = vi.mocked(saveSessionData);
 
 beforeEach(() => {
@@ -120,4 +121,36 @@ test('discards the reserved proof when moderation storage is disabled', async ()
   expect(scheduleIdentityMock).not.toHaveBeenCalled();
   expect(recordIdentityMock).not.toHaveBeenCalled();
   expect(JSON.stringify(saveSessionDataMock.mock.calls)).not.toContain(proof);
+});
+
+test('strips the reserved proof from custom-event data without treating it as identity', async () => {
+  parseRequestMock.mockResolvedValue({
+    body: {
+      type: 'event',
+      payload: {
+        website: websiteId,
+        id: distinctId,
+        hostname: 'truleaf.org',
+        url: '/insights',
+        name: 'content-view',
+        data: {
+          article: 'soil-health',
+          [TRULEAF_IDENTITY_PROOF_KEY]: proof,
+        },
+      },
+    },
+  } as any);
+
+  const response = await POST(new Request('http://localhost/api/send', { method: 'POST' }));
+
+  expect(response.status).toBe(200);
+  expect(saveEventMock).toHaveBeenCalledWith(
+    expect.objectContaining({
+      eventName: 'content-view',
+      eventData: { article: 'soil-health' },
+    }),
+  );
+  expect(JSON.stringify(saveEventMock.mock.calls)).not.toContain(proof);
+  expect(scheduleIdentityMock).not.toHaveBeenCalled();
+  expect(recordIdentityMock).not.toHaveBeenCalled();
 });

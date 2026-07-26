@@ -47,8 +47,22 @@ export const moderationActionSchema = z.object({
   targets: z.array(
     z.object({
       type: z.enum(['account', 'ip']),
-      targetId: z.string().optional(),
       displayValue: z.string(),
+      status: z.enum(['applied', 'pending', 'failed']),
+      api: enforcementStateSchema,
+      vercel: enforcementStateSchema,
+      code: z.string().optional(),
+      message: z.string().optional(),
+    }),
+  ),
+});
+
+export const moderationBrowserActionSchema = z.object({
+  requestId: z.string(),
+  status: z.enum(['applied', 'partial', 'pending', 'failed']),
+  targets: z.array(
+    z.object({
+      type: z.enum(['account', 'ip']),
       status: z.enum(['applied', 'pending', 'failed']),
       api: enforcementStateSchema,
       vercel: enforcementStateSchema,
@@ -60,6 +74,7 @@ export const moderationActionSchema = z.object({
 
 export type ModerationStatusResponse = z.infer<typeof moderationStatusSchema>;
 export type ModerationActionResponse = z.infer<typeof moderationActionSchema>;
+export type ModerationBrowserActionResponse = z.infer<typeof moderationBrowserActionSchema>;
 
 function getServiceConfig() {
   const baseUrl = process.env.TRULEAF_MODERATION_API_URL;

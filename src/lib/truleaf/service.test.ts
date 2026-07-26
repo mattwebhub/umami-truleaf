@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
   createTruleafServiceSignature,
   moderationActionSchema,
+  moderationBrowserActionSchema,
   moderationStatusSchema,
   requestTruleafModeration,
 } from './service';
@@ -96,7 +97,7 @@ describe('Truleaf service response boundary', () => {
     });
   });
 
-  test('strips source-bound ban IDs and raw values from action responses', async () => {
+  test('strips stable target IDs, source-bound ban IDs, and raw values from action responses', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
@@ -137,11 +138,40 @@ describe('Truleaf service response boundary', () => {
       targets: [
         {
           type: 'ip',
-          targetId: 'opaque-network',
           displayValue: '192.0.x.x',
           status: 'applied',
           api: 'applied',
           vercel: 'applied',
+        },
+      ],
+    });
+  });
+
+  test('strips the internal operation ID at the browser action boundary', () => {
+    expect(
+      moderationBrowserActionSchema.parse({
+        operationId: 'internal-operation-id',
+        requestId: 'request-1',
+        status: 'applied',
+        targets: [
+          {
+            type: 'account',
+            displayValue: 'user…1234',
+            status: 'applied',
+            api: 'applied',
+            vercel: 'not_applicable',
+          },
+        ],
+      }),
+    ).toEqual({
+      requestId: 'request-1',
+      status: 'applied',
+      targets: [
+        {
+          type: 'account',
+          status: 'applied',
+          api: 'applied',
+          vercel: 'not_applicable',
         },
       ],
     });

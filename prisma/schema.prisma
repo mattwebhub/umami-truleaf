@@ -136,6 +136,23 @@ model TruleafSessionIdentity {
   @@map("truleaf_session_identity")
 }
 
+/// Encrypted, source-bound opaque reference to an active Truleaf account ban.
+/// This is not an identity proof and never enters generic analytics storage.
+model TruleafSessionAccountBanReference {
+  id                    String    @id() @map("reference_id") @db.Uuid
+  websiteId             String    @map("website_id") @db.Uuid
+  sessionId             String    @map("session_id") @db.Uuid
+  referenceCiphertext   Bytes     @map("reference_ciphertext")
+  nonce                 Bytes
+  encryptionKeyVersion  String    @map("encryption_key_version") @db.VarChar(32)
+  expiresAt             DateTime? @map("expires_at") @db.Timestamptz(6)
+  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([websiteId, sessionId])
+  @@index([expiresAt])
+  @@map("truleaf_session_account_ban_reference")
+}
+
 model WebsiteEvent {
   id             String    @id() @map("event_id") @db.Uuid
   websiteId      String    @map("website_id") @db.Uuid

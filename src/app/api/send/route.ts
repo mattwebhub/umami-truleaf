@@ -105,7 +105,7 @@ export async function POST(request: Request) {
       url,
       referrer,
       name,
-      data,
+      data: rawData,
       title,
       tag,
       timestamp,
@@ -116,6 +116,12 @@ export async function POST(request: Request) {
       fcp,
       ttfb,
     } = payload;
+    // Moderation credentials are never analytics properties. Partition once
+    // before branching so custom events and any future generic data path cannot
+    // accidentally persist the reserved field.
+    const { sessionData: data, proof: identityProof } = rawData
+      ? partitionTruleafIdentityProof(rawData)
+      : { sessionData: undefined, proof: undefined };
 
     const sourceId = websiteId || pixelId || linkId;
 
@@ -310,28 +316,23 @@ export async function POST(request: Request) {
       });
     } else if (type === COLLECTION_TYPE.identify) {
       if (data) {
-        // This reserved proof is a moderation credential, not analytics data.
-        // Strip it for every website and feature state so it can never reach
-        // generic session properties, exports, or aggregate queries.
-        const { sessionData, proof } = partitionTruleafIdentityProof(data);
-
         if (
-          proof &&
+          identityProof &&
           websiteId &&
           id &&
           isTruleafModerationEnabled() &&
           isTruleafWebsite(websiteId)
         ) {
           scheduleTruleafIdentityProofStorage(() =>
-            recordTruleafSessionIdentityProof(websiteId, sessionId, id, proof),
+            recordTruleafSessionIdentityProof(websiteId, sessionId, id, identityProof),
           );
         }
 
-        if (Object.keys(sessionData).length) {
+        if (Object.keys(data).length) {
           await saveSessionData({
             websiteId,
             sessionId,
-            sessionData,
+            sessionData: data,
             distinctId: id,
             createdAt,
           });

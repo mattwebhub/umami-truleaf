@@ -19,9 +19,9 @@ import { useState } from 'react';
 import { LoadingPanel } from '@/components/common/LoadingPanel';
 import { useTruleafModerationQuery } from '@/components/hooks/queries/useTruleafModerationQuery';
 import { TRULEAF_MODERATION_TARGET_LIMIT } from '@/lib/truleaf/constants';
-import type { ModerationActionResponse } from '@/lib/truleaf/service';
+import type { ModerationBrowserActionResponse } from '@/lib/truleaf/service';
 
-export function getModerationResultMessage(status: ModerationActionResponse['status']) {
+export function getModerationResultMessage(status: ModerationBrowserActionResponse['status']) {
   return {
     applied: 'Moderation applied',
     partial: 'Moderation partially applied; review target status',

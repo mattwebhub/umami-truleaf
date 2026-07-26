@@ -8,7 +8,11 @@ const ALGORITHM = 'aes-256-gcm';
 const AUTH_TAG_BYTES = 16;
 const NONCE_BYTES = 12;
 const MAX_PROOF_BYTES = 4096;
-const MAX_PROOF_LIFETIME_MS = 366 * 24 * 60 * 60 * 1000;
+const MAX_ACCEPTED_PROOF_LIFETIME_MS = 366 * 24 * 60 * 60 * 1000;
+// Match Truleaf's approved default issuer lifetime. Longer structurally valid
+// JWTs can be accepted, but the fork has no reason to retain them longer now
+// that unban authorization is an independent opaque reference.
+const MAX_STORED_PROOF_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
 const log = debug('umami:truleaf');
 
 export const TRULEAF_IDENTITY_PROOF_KEY = 'truleafIdentityProof';
@@ -95,7 +99,7 @@ export function encryptIdentityProof(
     !expiresAt ||
     !Number.isFinite(expiresAt.getTime()) ||
     expiresAt <= now ||
-    expiresAt.getTime() - now.getTime() > MAX_PROOF_LIFETIME_MS
+    expiresAt.getTime() - now.getTime() > MAX_ACCEPTED_PROOF_LIFETIME_MS
   ) {
     return undefined;
   }
@@ -116,7 +120,14 @@ export function encryptIdentityProof(
   const encrypted = Buffer.concat([cipher.update(proof, 'utf8'), cipher.final()]);
   const ciphertext = Buffer.concat([encrypted, cipher.getAuthTag()]);
 
-  return { ciphertext, nonce, keyVersion, expiresAt };
+  return {
+    ciphertext,
+    nonce,
+    keyVersion,
+    expiresAt: new Date(
+      Math.min(expiresAt.getTime(), now.getTime() + MAX_STORED_PROOF_LIFETIME_MS),
+    ),
+  };
 }
 
 export function decryptIdentityProof(

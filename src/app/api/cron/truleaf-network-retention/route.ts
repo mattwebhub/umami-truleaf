@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { json, unauthorized } from '@/lib/response';
 import {
+  deleteExpiredTruleafSessionAccountBanReferences,
   deleteExpiredTruleafSessionIdentities,
   deleteExpiredTruleafSessionNetworks,
 } from '@/queries/prisma';
@@ -27,14 +28,16 @@ export async function POST(request: Request) {
     return unauthorized();
   }
 
-  const [networks, identities] = await Promise.all([
+  const [networks, identities, accountBanReferences] = await Promise.all([
     deleteExpiredTruleafSessionNetworks(),
     deleteExpiredTruleafSessionIdentities(),
+    deleteExpiredTruleafSessionAccountBanReferences(),
   ]);
 
   return json({
-    deleted: networks.count + identities.count,
+    deleted: networks.count + identities.count + accountBanReferences.count,
     deletedNetworks: networks.count,
     deletedIdentityProofs: identities.count,
+    deletedAccountBanReferences: accountBanReferences.count,
   });
 }

@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import type { ModerationActionResponse } from '@/lib/truleaf/service';
+import type { ModerationBrowserActionResponse } from '@/lib/truleaf/service';
 import { useApi } from '../useApi';
 
 export interface TruleafModerationData {
@@ -37,7 +37,7 @@ export function useTruleafModerationQuery(websiteId: string, sessionId: string) 
     retry: false,
   });
   const mutation = useMutation<
-    ModerationActionResponse,
+    ModerationBrowserActionResponse,
     Error,
     {
       requestId: string;

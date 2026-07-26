@@ -6,6 +6,7 @@ import { CLICKHOUSE, PRISMA, runQuery } from '@/lib/db';
 import { truncateString } from '@/lib/format';
 import kafka from '@/lib/kafka';
 import prisma from '@/lib/prisma';
+import { partitionTruleafIdentityProof } from '@/lib/truleaf/identity-proof';
 import type { DynamicData } from '@/lib/types';
 
 export interface SaveSessionDataArgs {
@@ -17,9 +18,17 @@ export interface SaveSessionDataArgs {
 }
 
 export async function saveSessionData(data: SaveSessionDataArgs) {
+  const sessionData = partitionTruleafIdentityProof(data.sessionData).sessionData;
+
+  if (!Object.keys(sessionData).length) {
+    return;
+  }
+
+  const sanitizedData = { ...data, sessionData };
+
   return runQuery({
-    [PRISMA]: () => relationalQuery(data),
-    [CLICKHOUSE]: () => clickhouseQuery(data),
+    [PRISMA]: () => relationalQuery(sanitizedData),
+    [CLICKHOUSE]: () => clickhouseQuery(sanitizedData),
   });
 }
 

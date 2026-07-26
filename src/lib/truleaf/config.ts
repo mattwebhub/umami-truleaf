@@ -25,6 +25,10 @@ export function isTruleafWebsite(websiteId: string) {
   return csv(process.env.TRULEAF_WEBSITE_IDS).has(websiteId);
 }
 
+export function isTruleafModerationOperator(userId: string) {
+  return csv(process.env.TRULEAF_MODERATION_OPERATOR_IDS).has(userId);
+}
+
 export function getTruleafNetworkRetentionDays() {
   const value = Number(process.env.TRULEAF_NETWORK_RETENTION_DAYS ?? 30);
 

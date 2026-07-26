@@ -12,6 +12,9 @@ All features are disabled unless explicitly enabled and allowlisted.
 TRULEAF_MODERATION_ENABLED=false
 TRULEAF_NETWORK_CAPTURE_ENABLED=false
 TRULEAF_WEBSITE_IDS=00000000-0000-0000-0000-000000000000
+# Explicit Umami user UUIDs allowed to operate moderation. Website update
+# permission is still required; an empty allowlist denies every operator.
+TRULEAF_MODERATION_OPERATOR_IDS=00000000-0000-0000-0000-000000000000
 TRULEAF_NETWORK_RETENTION_DAYS=30
 
 # First entry is active; retained entries can decrypt data during key rotation.
@@ -43,8 +46,10 @@ Encryption and blind-index keys must be independently generated. Do not reuse
   authenticated Truleaf backend; Truleaf verifies the proof again before acting.
 - The browser selects opaque network-record IDs. The server resolves and
   decrypts them; raw addresses never enter browser requests or responses.
-- Share tokens cannot use moderation APIs. The operator must have update access
-  to the website or be an Umami administrator.
+- Share tokens cannot use moderation APIs. The operator's Umami user UUID must
+  be explicitly listed in `TRULEAF_MODERATION_OPERATOR_IDS` and the operator
+  must also have update access to the website. An administrator is not exempt
+  from the explicit operator allowlist.
 
 ## Storage and retention
 

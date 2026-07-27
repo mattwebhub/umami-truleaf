@@ -258,6 +258,7 @@ test.describe('Truleaf verified identity and scoped branding', () => {
     await page.goto(`/websites/${truleafWebsiteId}/sessions`);
 
     await expect(page.locator('[data-website-brand="truleaf"]')).toHaveCount(1);
+    await expect(page.locator('html')).toHaveAttribute('data-website-brand', 'truleaf');
     await expect(page.getByLabel('Truleaf Analytics').filter({ visible: true })).toBeVisible();
     await expect(page.getByText('Matheus Paranhos').first()).toBeVisible();
     await expect(page.getByAltText('Matheus Paranhos')).toBeVisible();
@@ -270,9 +271,55 @@ test.describe('Truleaf verified identity and scoped branding', () => {
     await expect(page.getByText('@matheus · user · premium')).toBeVisible();
     await expect(page.getByText('Session', { exact: true }).last()).toBeVisible();
 
+    await page.evaluate(() => {
+      document.documentElement.classList.remove('dark');
+      document.documentElement.dataset.theme = 'light';
+    });
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const styles = getComputedStyle(document.documentElement);
+          return {
+            canvas: styles.getPropertyValue('--surface-raised').trim(),
+            card: styles.getPropertyValue('--surface-base').trim(),
+            renderedCanvas: getComputedStyle(document.body).backgroundColor,
+            text: styles.getPropertyValue('--text-primary').trim(),
+          };
+        }),
+      )
+      .toEqual({
+        canvas: '#fdf6ed',
+        card: '#fff',
+        renderedCanvas: 'rgb(253, 246, 237)',
+        text: '#2d2926',
+      });
+
+    await page.evaluate(() => {
+      document.documentElement.dataset.theme = 'dark';
+    });
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const styles = getComputedStyle(document.documentElement);
+          return {
+            canvas: styles.getPropertyValue('--surface-raised').trim(),
+            card: styles.getPropertyValue('--surface-base').trim(),
+            renderedCanvas: getComputedStyle(document.body).backgroundColor,
+            text: styles.getPropertyValue('--text-primary').trim(),
+          };
+        }),
+      )
+      .toEqual({
+        canvas: '#0a0a0a',
+        card: '#171717',
+        renderedCanvas: 'rgb(10, 10, 10)',
+        text: '#fafafa',
+      });
+
     await page.goto(`/websites/${standardWebsiteId}`);
 
     await expect(page.locator('[data-website-brand="truleaf"]')).toHaveCount(0);
+    await expect(page.locator('html')).not.toHaveAttribute('data-website-brand');
     await expect(page.getByLabel('Umami').filter({ visible: true })).toBeVisible();
     await expect(page.getByText('umami', { exact: true }).filter({ visible: true })).toBeVisible();
     await expect(page.getByText('Truleaf.org')).toHaveCount(0);

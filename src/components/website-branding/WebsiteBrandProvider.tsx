@@ -1,5 +1,5 @@
 'use client';
-import { createContext, type ReactNode, useContext } from 'react';
+import { createContext, Fragment, type ReactNode, useContext, useEffect } from 'react';
 import type { WebsiteBrandId } from '@/lib/website-branding/config';
 
 const WebsiteBrandContext = createContext<WebsiteBrandId | null>(null);
@@ -21,9 +21,21 @@ export function useWebsiteBrand() {
 export function WebsiteBrandBoundary({ children }: { children: ReactNode }) {
   const brand = useWebsiteBrand();
 
-  return (
-    <div data-website-brand={brand ?? undefined} style={{ display: 'contents' }}>
-      {children}
-    </div>
-  );
+  useEffect(() => {
+    const root = document.documentElement;
+
+    if (brand) {
+      root.dataset.websiteBrand = brand;
+    } else {
+      delete root.dataset.websiteBrand;
+    }
+
+    return () => {
+      if (!brand || root.dataset.websiteBrand === brand) {
+        delete root.dataset.websiteBrand;
+      }
+    };
+  }, [brand]);
+
+  return <Fragment>{children}</Fragment>;
 }

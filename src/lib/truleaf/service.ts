@@ -87,8 +87,9 @@ function getServiceConfig() {
 
   const url = new URL(baseUrl);
   const decodedSecret = Buffer.from(secret, 'base64');
+  const isLoopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
 
-  if (url.protocol !== 'https:' && process.env.NODE_ENV === 'production') {
+  if (url.protocol !== 'https:' && process.env.NODE_ENV === 'production' && !isLoopback) {
     throw new Error('TRULEAF_MODERATION_API_URL must use HTTPS in production');
   }
 

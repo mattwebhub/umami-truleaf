@@ -153,6 +153,48 @@ model TruleafSessionAccountBanReference {
   @@map("truleaf_session_account_ban_reference")
 }
 
+/// Operator-authored review workflow. Analytics clients cannot create or alter
+/// these records; they are deliberately separate from tracked event data.
+model SessionReview {
+  id              String    @id() @map("review_id") @db.Uuid
+  websiteId       String    @map("website_id") @db.Uuid
+  sessionId       String    @map("session_id") @db.Uuid
+  createdByUserId String    @map("created_by_user_id") @db.Uuid
+  status          String    @default("open") @db.VarChar(20)
+  severity        String    @default("medium") @db.VarChar(20)
+  severityRank    Int       @default(1) @map("severity_rank")
+  reason          String    @db.VarChar(500)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  resolvedAt      DateTime? @map("resolved_at") @db.Timestamptz(6)
+
+  @@unique([websiteId, sessionId])
+  @@index([websiteId, status, severityRank, updatedAt])
+  @@map("session_review")
+}
+
+/// Trusted ingestion ledger for backend-owned product facts. Public tracker
+/// requests cannot write this table; cockpit metrics use it as their source of
+/// truth instead of trusting an event name supplied by a browser.
+model ServerEventFact {
+  id             String    @id() @map("server_event_fact_id") @db.Uuid
+  websiteId      String    @map("website_id") @db.Uuid
+  keyId          String    @map("key_id") @db.VarChar(80)
+  idempotencyKey String    @map("idempotency_key") @db.VarChar(160)
+  eventName      String    @map("event_name") @db.VarChar(50)
+  distinctId     String    @map("distinct_id") @db.VarChar(50)
+  urlPath        String    @map("url_path") @db.VarChar(500)
+  data           Json?
+  occurredAt     DateTime  @map("occurred_at") @db.Timestamptz(6)
+  projectedAt    DateTime? @map("projected_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([keyId, idempotencyKey])
+  @@index([websiteId, eventName, occurredAt])
+  @@index([websiteId, distinctId, occurredAt])
+  @@map("server_event_fact")
+}
+
 model WebsiteEvent {
   id             String    @id() @map("event_id") @db.Uuid
   websiteId      String    @map("website_id") @db.Uuid

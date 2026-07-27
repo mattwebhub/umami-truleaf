@@ -9,6 +9,7 @@ import { saveEventData } from './saveEventData';
 import { saveRevenue } from './saveRevenue';
 
 export interface SaveEventArgs {
+  eventId?: string;
   websiteId: string;
   sessionId: string;
   visitId: string;
@@ -71,6 +72,7 @@ export async function saveEvent(args: SaveEventArgs) {
 }
 
 async function relationalQuery({
+  eventId,
   websiteId,
   sessionId,
   visitId,
@@ -103,7 +105,7 @@ async function relationalQuery({
   fcp,
   ttfb,
 }: SaveEventArgs) {
-  const websiteEventId = uuid();
+  const websiteEventId = eventId || uuid();
 
   await prisma.client.websiteEvent.create({
     data: {
@@ -169,6 +171,7 @@ async function relationalQuery({
 }
 
 async function clickhouseQuery({
+  eventId,
   websiteId,
   sessionId,
   visitId,
@@ -212,13 +215,13 @@ async function clickhouseQuery({
 }: SaveEventArgs) {
   const { insert, getUTCString } = clickhouse;
   const { sendMessage } = kafka;
-  const eventId = uuid();
+  const websiteEventId = eventId || uuid();
 
   const message = {
     website_id: websiteId,
     session_id: sessionId,
     visit_id: visitId,
-    event_id: eventId,
+    event_id: websiteEventId,
     region: truncateString(
       country && region ? (region.includes('-') ? region : `${country}-${region}`) : null,
       FIELD_LENGTH.region,
@@ -270,7 +273,7 @@ async function clickhouseQuery({
     await saveEventData({
       websiteId,
       sessionId,
-      eventId,
+      eventId: websiteEventId,
       urlPath: truncateString(urlPath, FIELD_LENGTH.url),
       eventName: truncateString(eventName, FIELD_LENGTH.eventName),
       eventData,

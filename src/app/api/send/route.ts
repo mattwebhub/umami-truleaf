@@ -10,6 +10,7 @@ import { fetchWebsite } from '@/lib/load';
 import { parseRequest } from '@/lib/request';
 import { badRequest, forbidden, json, serverError } from '@/lib/response';
 import { anyObjectParam, urlOrPathParam } from '@/lib/schema';
+import { isServerEventName } from '@/lib/server-events';
 import {
   getTruleafCaptureAddress,
   scheduleTruleafNetworkCapture,
@@ -220,6 +221,10 @@ export async function POST(request: Request) {
     }
 
     if (type === COLLECTION_TYPE.event) {
+      if (name && isServerEventName(name)) {
+        return forbidden({ message: 'This event name is reserved for trusted server ingestion' });
+      }
+
       const base = hostname ? `https://${hostname}` : 'https://localhost';
       const currentUrl = new URL(url, base);
 

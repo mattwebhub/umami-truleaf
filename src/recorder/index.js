@@ -12,6 +12,7 @@ import { addCustomEvent, record } from 'rrweb';
 
   const website = config('website-id');
   const hostUrl = config('host-url');
+  const excludePaths = config('exclude-paths');
 
   if (!website) return;
 
@@ -48,7 +49,34 @@ import { addCustomEvent, record } from 'rrweb';
   let replayStartTime = null;
   let replayLastChunkIndex = 0;
   let replayStopped = false;
+  let replayStarted = false;
+  let replaySampled = false;
+  let heatmapSampled = false;
   let heatmapStarted = false;
+  let heatmapUrlChangeFn = null;
+
+  const excludedPathPatterns = (() => {
+    if (!excludePaths) return [];
+    try {
+      const values = JSON.parse(excludePaths);
+      if (!Array.isArray(values)) return [];
+      return values
+        .filter(value => typeof value === 'string' && value.length <= 200)
+        .slice(0, 20)
+        .flatMap(value => {
+          try {
+            return [new RegExp(value)];
+          } catch {
+            return [];
+          }
+        });
+    } catch {
+      return [];
+    }
+  })();
+
+  const isPathAllowed = pathname => !excludedPathPatterns.some(pattern => pattern.test(pathname));
+  const isCaptureAllowed = () => isPathAllowed(window.location.pathname);
 
   const getSessionCache = () => window.umami?.getSession?.()?.cache;
 
@@ -259,6 +287,10 @@ import { addCustomEvent, record } from 'rrweb';
   };
 
   const flushHeatmap = (useKeepalive = false) => {
+    if (!isCaptureAllowed()) {
+      heatmapBuffer = [];
+      return;
+    }
     if (!heatmapBuffer.length) return;
 
     const events = heatmapBuffer;
@@ -280,6 +312,8 @@ import { addCustomEvent, record } from 'rrweb';
   };
 
   const queueHeatmapEvent = event => {
+    if (!isCaptureAllowed()) return;
+
     heatmapBuffer.push({
       ...event,
       timestamp: Date.now(),
@@ -293,13 +327,15 @@ import { addCustomEvent, record } from 'rrweb';
     scheduleHeatmapFlush();
   };
 
-  const stopReplay = () => {
+  const stopReplay = (discard = false) => {
     if (replayStopped) return;
 
     replayStopped = true;
 
     if (replayFlushTimer) clearInterval(replayFlushTimer);
-    flushReplay();
+    replayFlushTimer = null;
+    if (discard) replayBuffer = [];
+    else flushReplay();
 
     if (replayStopFn) {
       replayStopFn();
@@ -430,13 +466,17 @@ import { addCustomEvent, record } from 'rrweb';
   };
 
   const beginReplayCapture = () => {
+    if (!isCaptureAllowed() || replayStopFn) return;
+
+    replayStarted = true;
+    replayStopped = false;
     replayStartTime = Date.now();
 
     replayFlushTimer = setInterval(() => flushReplay(), REPLAY_FLUSH_INTERVAL);
 
     replayStopFn = record({
       emit(event) {
-        if (replayStopped) return;
+        if (replayStopped || !isCaptureAllowed()) return;
 
         if (Date.now() - replayStartTime > maxDuration) {
           stopReplay();
@@ -585,28 +625,22 @@ import { addCustomEvent, record } from 'rrweb';
     const onUrlChange = () => {
       if (location.href === scrollUrl) return;
 
-      flushScroll();
+      let previousPath = '';
+      try {
+        previousPath = new URL(scrollUrl, location.origin).pathname;
+      } catch {
+        previousPath = '';
+      }
+      if (isPathAllowed(previousPath)) flushScroll();
+      else heatmapBuffer = [];
       scrollUrl = location.href;
       lastFlushedScrollPct = 0;
 
-      if (replayStopFn && !replayStopped) {
+      if (replayStopFn && !replayStopped && isCaptureAllowed()) {
         addCustomEvent('url-change', { url: scrollUrl });
       }
     };
-
-    const hookHistory = method => {
-      const original = history[method];
-
-      history[method] = function (...args) {
-        const result = original.apply(this, args);
-        onUrlChange();
-        return result;
-      };
-    };
-
-    hookHistory('pushState');
-    hookHistory('replaceState');
-    window.addEventListener('popstate', onUrlChange);
+    heatmapUrlChangeFn = onUrlChange;
     window.addEventListener('scroll', onScroll, { passive: true });
     document.addEventListener('click', onClick, { capture: true, passive: true });
 
@@ -644,19 +678,50 @@ import { addCustomEvent, record } from 'rrweb';
     setTimeout(() => waitForSession(callback, attempts + 1), 100);
   };
 
-  const startCaptures = () => {
-    const shouldRecordReplay = replayEnabled && shouldSample(sampleRate);
-    const shouldRecordHeatmap = heatmapEnabled && shouldSample(heatmapSampleRate);
+  const handleRouteEligibility = () => {
+    heatmapUrlChangeFn?.();
 
-    if (shouldRecordHeatmap) {
+    if (!isCaptureAllowed()) {
+      heatmapBuffer = [];
+      if (replayStopFn && !replayStopped) stopReplay(true);
+      return;
+    }
+
+    if (replayEnabled && replaySampled && (!replayStarted || replayStopped)) {
+      beginReplayCapture();
+    }
+  };
+
+  const installRouteGuard = () => {
+    const hookHistory = method => {
+      const original = history[method];
+
+      history[method] = function (...args) {
+        const result = original.apply(this, args);
+        handleRouteEligibility();
+        return result;
+      };
+    };
+
+    hookHistory('pushState');
+    hookHistory('replaceState');
+    window.addEventListener('popstate', handleRouteEligibility);
+  };
+
+  const startCaptures = () => {
+    replaySampled = replayEnabled && shouldSample(sampleRate);
+    heatmapSampled = heatmapEnabled && shouldSample(heatmapSampleRate);
+    installRouteGuard();
+
+    if (heatmapSampled) {
       beginHeatmapCapture();
     }
 
-    if (shouldRecordReplay) {
+    if (replaySampled && isCaptureAllowed()) {
       beginReplayCapture();
     }
 
-    if (!shouldRecordHeatmap && !shouldRecordReplay) {
+    if (!heatmapSampled && !replaySampled) {
       return;
     }
 

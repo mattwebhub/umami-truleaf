@@ -17,6 +17,7 @@ afterEach(() => {
   delete process.env.TRULEAF_MODERATION_API_URL;
   delete process.env.TRULEAF_MODERATION_KEY_ID;
   delete process.env.TRULEAF_MODERATION_HMAC_SECRET;
+  vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
 
@@ -50,6 +51,40 @@ describe('Truleaf service signing', () => {
 });
 
 describe('Truleaf service response boundary', () => {
+  test.each([
+    'http://localhost:4000',
+    'http://127.0.0.1:4000',
+    'http://[::1]:4000',
+  ])('allows the loopback moderation service in production: %s', async baseUrl => {
+    vi.stubEnv('NODE_ENV', 'production');
+    process.env.TRULEAF_MODERATION_API_URL = baseUrl;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(Response.json({ success: true, data: { targets: [] } })),
+    );
+
+    await expect(
+      requestTruleafModeration({
+        path: '/api/v1/internal/moderation/status',
+        body: { targets: [] },
+        schema: moderationStatusSchema,
+      }),
+    ).resolves.toEqual({ targets: [] });
+  });
+
+  test('requires HTTPS for non-loopback moderation services in production', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    process.env.TRULEAF_MODERATION_API_URL = 'http://moderation.example.test';
+
+    await expect(
+      requestTruleafModeration({
+        path: '/api/v1/internal/moderation/status',
+        body: { targets: [] },
+        schema: moderationStatusSchema,
+      }),
+    ).rejects.toThrow('must use HTTPS in production');
+  });
+
   test('unwraps and strips non-contract fields from a success envelope', async () => {
     vi.stubGlobal(
       'fetch',

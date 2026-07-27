@@ -33,7 +33,10 @@ export async function GET(
 
   const website = await getWebsite(websiteId);
 
-  return json(website);
+  return json({
+    ...website,
+    canUpdate: await canUpdateWebsite(auth, websiteId),
+  });
 }
 
 export async function POST(

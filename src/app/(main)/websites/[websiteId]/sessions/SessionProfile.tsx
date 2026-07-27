@@ -18,6 +18,7 @@ import { SessionActivity } from './SessionActivity';
 import { SessionData } from './SessionData';
 import { SessionInfo } from './SessionInfo';
 import { SessionReplaysDataTable } from './SessionReplaysDataTable';
+import { SessionReviewControl } from './SessionReviewControl';
 import { SessionStats } from './SessionStats';
 import { TruleafModerationPanel } from './TruleafModerationPanel';
 
@@ -25,11 +26,13 @@ export function SessionProfile({
   websiteId,
   sessionId,
   showReplays = true,
+  reviewsEnabled = false,
   onClose,
 }: {
   websiteId: string;
   sessionId: string;
   showReplays?: boolean;
+  reviewsEnabled?: boolean;
   onClose?: () => void;
 }) {
   const { data, isLoading, error } = useWebsiteSessionQuery(websiteId, sessionId);
@@ -63,6 +66,11 @@ export function SessionProfile({
             </Row>
             <SessionStats data={data} />
             <SessionInfo data={data} />
+            {reviewsEnabled && (
+              <Row justifyContent="flex-end">
+                <SessionReviewControl websiteId={websiteId} sessionId={sessionId} />
+              </Row>
+            )}
             <TruleafModerationPanel websiteId={websiteId} sessionId={sessionId} />
 
             <Tabs>

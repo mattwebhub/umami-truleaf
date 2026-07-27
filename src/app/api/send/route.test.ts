@@ -70,6 +70,7 @@ const saveSessionDataMock = vi.mocked(saveSessionData);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  delete process.env.PRODUCT_COCKPIT_CONFIG;
   parseRequestMock.mockResolvedValue({
     body: {
       type: 'identify',
@@ -121,6 +122,26 @@ test('discards the reserved proof when moderation storage is disabled', async ()
   expect(scheduleIdentityMock).not.toHaveBeenCalled();
   expect(recordIdentityMock).not.toHaveBeenCalled();
   expect(JSON.stringify(saveSessionDataMock.mock.calls)).not.toContain(proof);
+});
+
+test('rejects the trusted namespace even without cockpit configuration', async () => {
+  parseRequestMock.mockResolvedValueOnce({
+    body: {
+      type: 'event',
+      payload: {
+        website: websiteId,
+        hostname: 'truleaf.org',
+        url: '/pricing',
+        name: 'server.subscription-verified',
+        data: { revenue: 999999 },
+      },
+    },
+  } as any);
+
+  const response = await POST(new Request('http://localhost/api/send', { method: 'POST' }));
+
+  expect(response.status).toBe(403);
+  expect(saveEventMock).not.toHaveBeenCalled();
 });
 
 test('strips the reserved proof from custom-event data without treating it as identity', async () => {

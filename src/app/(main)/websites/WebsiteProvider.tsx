@@ -4,7 +4,9 @@ import { createContext, type ReactNode } from 'react';
 import { useWebsiteQuery } from '@/components/hooks/queries/useWebsiteQuery';
 import type { Website } from '@/generated/prisma/client';
 
-export const WebsiteContext = createContext<Website>(null);
+export type WebsiteContextValue = Website & { canUpdate: boolean };
+
+export const WebsiteContext = createContext<WebsiteContextValue>(null);
 
 export function WebsiteProvider({
   websiteId,

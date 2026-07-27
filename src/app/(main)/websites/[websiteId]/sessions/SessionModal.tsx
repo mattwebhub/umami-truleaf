@@ -5,9 +5,10 @@ import { useNavigation } from '@/components/hooks';
 
 export interface SessionModalProps extends ModalProps {
   websiteId: string;
+  reviewsEnabled?: boolean;
 }
 
-export function SessionModal({ websiteId, ...props }: SessionModalProps) {
+export function SessionModal({ websiteId, reviewsEnabled = false, ...props }: SessionModalProps) {
   const {
     router,
     pathname,
@@ -38,6 +39,7 @@ export function SessionModal({ websiteId, ...props }: SessionModalProps) {
                 websiteId={websiteId}
                 sessionId={session}
                 showReplays={!isSharePage}
+                reviewsEnabled={reviewsEnabled && !isSharePage}
                 onClose={() => close()}
               />
             </Column>

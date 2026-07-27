@@ -4,6 +4,7 @@ import prisma from '@/lib/prisma';
 import redis from '@/lib/redis';
 import { sanitizeSortFilters } from '@/lib/sort';
 import type { QueryFilters } from '@/lib/types';
+import { revokeServiceApiKeysForLifecycle } from './serviceApiKey';
 
 const WEBSITE_SORT_FIELDS = ['name', 'domain', 'createdAt'] as const;
 
@@ -153,6 +154,30 @@ export async function resetWebsite(websiteId: string) {
         where: { websiteId },
       });
 
+      await tx.truleafSessionIdentity.deleteMany({
+        where: { websiteId },
+      });
+
+      await tx.verifiedSessionIdentity.deleteMany({
+        where: { websiteId },
+      });
+
+      await tx.verifiedIdentityProfile.deleteMany({
+        where: { websiteId },
+      });
+
+      await tx.truleafSessionAccountBanReference.deleteMany({
+        where: { websiteId },
+      });
+
+      await tx.sessionReview.deleteMany({
+        where: { websiteId },
+      });
+
+      await tx.serverEventFact.deleteMany({
+        where: { websiteId },
+      });
+
       await tx.sessionData.deleteMany({
         where: { websiteId },
       });
@@ -208,6 +233,30 @@ export async function deleteWebsite(websiteId: string) {
         where: { websiteId },
       });
 
+      await tx.truleafSessionIdentity.deleteMany({
+        where: { websiteId },
+      });
+
+      await tx.verifiedSessionIdentity.deleteMany({
+        where: { websiteId },
+      });
+
+      await tx.verifiedIdentityProfile.deleteMany({
+        where: { websiteId },
+      });
+
+      await tx.truleafSessionAccountBanReference.deleteMany({
+        where: { websiteId },
+      });
+
+      await tx.sessionReview.deleteMany({
+        where: { websiteId },
+      });
+
+      await tx.serverEventFact.deleteMany({
+        where: { websiteId },
+      });
+
       await tx.sessionData.deleteMany({
         where: { websiteId },
       });
@@ -231,6 +280,8 @@ export async function deleteWebsite(websiteId: string) {
       await tx.share.deleteMany({
         where: { entityId: websiteId },
       });
+
+      await revokeServiceApiKeysForLifecycle(tx, { websiteId }, 'website-deleted');
 
       const website = cloudMode
         ? await tx.website.update({

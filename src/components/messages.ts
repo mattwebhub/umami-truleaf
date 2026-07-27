@@ -222,6 +222,7 @@ export const labels: Record<string, string> = {
   unique: 'label.unique',
   value: 'label.value',
   overview: 'label.overview',
+  productHealth: 'label.product-health',
   totalRecords: 'label.total-records',
   insight: 'label.insight',
   insights: 'label.insights',

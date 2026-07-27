@@ -2,6 +2,7 @@ import { Prisma } from '@/generated/prisma/client';
 import { uuid } from '@/lib/crypto';
 import prisma from '@/lib/prisma';
 import type { QueryFilters } from '@/lib/types';
+import { revokeServiceApiKeysForLifecycle } from './serviceApiKey';
 
 import TeamUserFindManyArgs = Prisma.TeamUserFindManyArgs;
 
@@ -57,10 +58,28 @@ export async function updateTeamUser(teamUserId: string, data: Prisma.TeamUserUp
 }
 
 export async function deleteTeamUser(teamId: string, userId: string) {
-  return prisma.client.teamUser.deleteMany({
-    where: {
-      teamId,
-      userId,
-    },
+  const websiteIds = (
+    await prisma.client.website.findMany({
+      where: { teamId, deletedAt: null },
+      select: { id: true },
+    })
+  ).map(website => website.id);
+
+  return prisma.transaction(async tx => {
+    const result = await tx.teamUser.deleteMany({
+      where: {
+        teamId,
+        userId,
+      },
+    });
+    await revokeServiceApiKeysForLifecycle(
+      tx,
+      {
+        createdByUserId: userId,
+        websiteId: { in: websiteIds },
+      },
+      'member-removed',
+    );
+    return result;
   });
 }

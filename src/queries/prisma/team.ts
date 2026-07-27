@@ -5,6 +5,7 @@ import prisma from '@/lib/prisma';
 import redis from '@/lib/redis';
 import { sanitizeSortFilters } from '@/lib/sort';
 import type { PageResult, QueryFilters } from '@/lib/types';
+import { revokeServiceApiKeysForLifecycle } from './serviceApiKey';
 
 import TeamFindManyArgs = Prisma.TeamFindManyArgs;
 
@@ -149,7 +150,7 @@ export async function deleteTeam(teamId: string) {
   const { client, transaction } = prisma;
   const cloudMode = !!process.env.CLOUD_MODE;
 
-  const [links, pixels, boards] = await Promise.all([
+  const [links, pixels, boards, websites] = await Promise.all([
     client.link.findMany({
       where: { teamId },
       select: { id: true, slug: true, deletedAt: true },
@@ -159,8 +160,10 @@ export async function deleteTeam(teamId: string) {
       select: { id: true, slug: true, deletedAt: true },
     }),
     client.board.findMany({ where: { teamId }, select: { id: true } }),
+    client.website.findMany({ where: { teamId }, select: { id: true } }),
   ]);
   const entityIds = [...links.map(l => l.id), ...pixels.map(p => p.id), ...boards.map(b => b.id)];
+  const websiteIds = websites.map(website => website.id);
   // Only invalidate Redis cache for slugs that are still live (not already soft-deleted).
   const linkSlugs = links.filter(l => !l.deletedAt).map(l => l.slug);
   const pixelSlugs = pixels.filter(p => !p.deletedAt).map(p => p.slug);
@@ -175,48 +178,52 @@ export async function deleteTeam(teamId: string) {
   };
 
   if (cloudMode) {
-    return transaction([
-      client.team.update({
+    return transaction(async tx => {
+      const result = await tx.team.update({
         data: {
           deletedAt: new Date(),
         },
         where: {
           id: teamId,
         },
-      }),
-      client.share.deleteMany({ where: { entityId: { in: entityIds } } }),
+      });
+      await tx.share.deleteMany({ where: { entityId: { in: entityIds } } });
       // deletedAt: null avoids restamping rows that were already soft-deleted earlier.
-      client.link.updateMany({
+      await tx.link.updateMany({
         data: { deletedAt: new Date() },
         where: { teamId, deletedAt: null },
-      }),
-      client.pixel.updateMany({
+      });
+      await tx.pixel.updateMany({
         data: { deletedAt: new Date() },
         where: { teamId, deletedAt: null },
-      }),
-      client.board.deleteMany({ where: { teamId } }),
-    ]).then(async result => {
+      });
+      await revokeServiceApiKeysForLifecycle(tx, { websiteId: { in: websiteIds } }, 'team-deleted');
+      await tx.board.deleteMany({ where: { teamId } });
+      return result;
+    }).then(async result => {
       await invalidateRedis();
       return result;
     });
   }
 
-  return transaction([
-    client.teamUser.deleteMany({
+  return transaction(async tx => {
+    await tx.teamUser.deleteMany({
       where: {
         teamId,
       },
-    }),
-    client.share.deleteMany({ where: { entityId: { in: entityIds } } }),
-    client.link.deleteMany({ where: { teamId } }),
-    client.pixel.deleteMany({ where: { teamId } }),
-    client.board.deleteMany({ where: { teamId } }),
-    client.team.delete({
+    });
+    await tx.share.deleteMany({ where: { entityId: { in: entityIds } } });
+    await tx.link.deleteMany({ where: { teamId } });
+    await tx.pixel.deleteMany({ where: { teamId } });
+    await revokeServiceApiKeysForLifecycle(tx, { websiteId: { in: websiteIds } }, 'team-deleted');
+    await tx.board.deleteMany({ where: { teamId } });
+    const result = await tx.team.delete({
       where: {
         id: teamId,
       },
-    }),
-  ]).then(async result => {
+    });
+    return result;
+  }).then(async result => {
     await invalidateRedis();
     return result;
   });

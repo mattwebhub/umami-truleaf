@@ -97,6 +97,202 @@ model Website {
   @@map("website")
 }
 
+/// Revocable, website-scoped credential for machine-to-machine analytics access.
+/// Only a keyed digest and a short display prefix are persisted; the plaintext
+/// secret is returned once when the key is created.
+model ServiceApiKey {
+  id              String    @id() @map("service_api_key_id") @db.Uuid
+  websiteId       String    @map("website_id") @db.Uuid
+  name            String    @db.VarChar(100)
+  keyPrefix       String    @unique @map("key_prefix") @db.VarChar(24)
+  keyHash         String    @map("key_hash") @db.Char(64)
+  scopes          Json
+  createdByUserId String    @map("created_by_user_id") @db.Uuid
+  expiresAt       DateTime? @map("expires_at") @db.Timestamptz(6)
+  revokedAt       DateTime? @map("revoked_at") @db.Timestamptz(6)
+  lastUsedAt      DateTime? @map("last_used_at") @db.Timestamptz(6)
+  rateLimitWindowAt DateTime? @map("rate_limit_window_at") @db.Timestamptz(6)
+  rateLimitCount    Int       @default(0) @map("rate_limit_count")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([websiteId, createdAt])
+  @@index([expiresAt])
+  @@map("service_api_key")
+}
+
+/// Minimal operational audit trail for service-key lifecycle and agent queries.
+/// It intentionally excludes request filters, results, tokens, IP addresses,
+/// and session or identity data.
+model ServiceApiKeyAudit {
+  id         String   @id() @map("service_api_key_audit_id") @db.Uuid
+  keyId      String   @map("service_api_key_id") @db.Uuid
+  websiteId  String?  @map("website_id") @db.Uuid
+  action     String   @db.VarChar(32)
+  reason     String?  @db.VarChar(32)
+  queryType  String?  @map("query_type") @db.VarChar(32)
+  status     String   @db.VarChar(20)
+  durationMs Int?     @map("duration_ms")
+  requestId  String   @map("request_id") @db.VarChar(64)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([keyId, createdAt])
+  @@index([websiteId, createdAt])
+  @@map("service_api_key_audit")
+}
+
+/// Coarse, pseudonymous ingress limiter used before service-key authentication.
+/// The HMAC cannot be used to recover the observed network address.
+model AgentApiIngressWindow {
+  fingerprint String   @id() @db.Char(64)
+  windowAt    DateTime @map("window_at") @db.Timestamptz(6)
+  count       Int      @default(0)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([updatedAt])
+  @@map("agent_api_ingress_window")
+}
+
+/// Truleaf-only, encrypted network observations used by the moderation integration.
+/// This table is deliberately separate from Umami's core session model so the fork can
+/// be rolled back to an upstream image without changing upstream analytics data.
+model TruleafSessionNetwork {
+  id                   String   @id() @map("network_id") @db.Uuid
+  websiteId            String   @map("website_id") @db.Uuid
+  sessionId            String   @map("session_id") @db.Uuid
+  ipHmac               String   @map("ip_hmac") @db.Char(64)
+  ipCiphertext         Bytes    @map("ip_ciphertext")
+  nonce                Bytes
+  encryptionKeyVersion String   @map("encryption_key_version") @db.VarChar(32)
+  addressFamily        Int      @map("address_family") @db.SmallInt
+  firstSeenAt          DateTime @default(now()) @map("first_seen_at") @db.Timestamptz(6)
+  lastSeenAt           DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  expiresAt            DateTime @map("expires_at") @db.Timestamptz(6)
+
+  @@unique([websiteId, sessionId, ipHmac])
+  @@index([websiteId, sessionId])
+  @@index([expiresAt])
+  @@map("truleaf_session_network")
+}
+
+/// Truleaf-only, encrypted account-identity proof used by the moderation bridge.
+/// Proofs never enter Umami's generic session_data model or analytics surfaces.
+model TruleafSessionIdentity {
+  id                   String   @id() @map("identity_id") @db.Uuid
+  websiteId            String   @map("website_id") @db.Uuid
+  sessionId            String   @map("session_id") @db.Uuid
+  proofCiphertext      Bytes    @map("proof_ciphertext")
+  nonce                Bytes
+  encryptionKeyVersion String   @map("encryption_key_version") @db.VarChar(32)
+  expiresAt            DateTime @map("expires_at") @db.Timestamptz(6)
+  updatedAt            DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  profileRetryAt       DateTime? @map("profile_retry_at") @db.Timestamptz(6)
+  profileAttemptCount  Int      @default(0) @map("profile_attempt_count")
+  profileLastAttemptAt DateTime? @map("profile_last_attempt_at") @db.Timestamptz(6)
+
+  @@unique([websiteId, sessionId])
+  @@index([expiresAt])
+  @@index([profileRetryAt])
+  @@map("truleaf_session_identity")
+}
+
+/// Server-verified account presentation data. Browser-provided identify
+/// properties never populate this table.
+model VerifiedIdentityProfile {
+  id             String   @id() @map("identity_profile_id") @db.Uuid
+  websiteId      String   @map("website_id") @db.Uuid
+  distinctId     String   @map("distinct_id") @db.VarChar(50)
+  displayName    String   @map("display_name") @db.VarChar(100)
+  username       String   @db.VarChar(50)
+  avatarUrl      String?  @map("avatar_url") @db.VarChar(2183)
+  role           String   @db.VarChar(50)
+  plan           String   @db.VarChar(50)
+  profileVersion String   @map("profile_version") @db.VarChar(64)
+  verifiedUntil  DateTime @map("verified_until") @db.Timestamptz(6)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  sessions       VerifiedSessionIdentity[]
+
+  @@unique([websiteId, distinctId])
+  @@index([verifiedUntil])
+  @@index([websiteId, updatedAt])
+  @@map("verified_identity_profile")
+}
+
+/// Proof-backed binding between an analytics session and a verified profile.
+/// No relation to Session is declared because ClickHouse can own session data.
+model VerifiedSessionIdentity {
+  id         String   @id() @map("session_identity_id") @db.Uuid
+  websiteId  String   @map("website_id") @db.Uuid
+  sessionId  String   @map("session_id") @db.Uuid
+  distinctId String   @map("distinct_id") @db.VarChar(50)
+  verifiedAt DateTime @default(now()) @map("verified_at") @db.Timestamptz(6)
+  profile    VerifiedIdentityProfile @relation(fields: [websiteId, distinctId], references: [websiteId, distinctId], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([websiteId, sessionId])
+  @@index([websiteId, distinctId])
+  @@map("verified_session_identity")
+}
+
+/// Encrypted, source-bound opaque reference to an active Truleaf account ban.
+/// This is not an identity proof and never enters generic analytics storage.
+model TruleafSessionAccountBanReference {
+  id                    String    @id() @map("reference_id") @db.Uuid
+  websiteId             String    @map("website_id") @db.Uuid
+  sessionId             String    @map("session_id") @db.Uuid
+  referenceCiphertext   Bytes     @map("reference_ciphertext")
+  nonce                 Bytes
+  encryptionKeyVersion  String    @map("encryption_key_version") @db.VarChar(32)
+  expiresAt             DateTime? @map("expires_at") @db.Timestamptz(6)
+  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([websiteId, sessionId])
+  @@index([expiresAt])
+  @@map("truleaf_session_account_ban_reference")
+}
+
+/// Operator-authored review workflow. Analytics clients cannot create or alter
+/// these records; they are deliberately separate from tracked event data.
+model SessionReview {
+  id              String    @id() @map("review_id") @db.Uuid
+  websiteId       String    @map("website_id") @db.Uuid
+  sessionId       String    @map("session_id") @db.Uuid
+  createdByUserId String    @map("created_by_user_id") @db.Uuid
+  status          String    @default("open") @db.VarChar(20)
+  severity        String    @default("medium") @db.VarChar(20)
+  severityRank    Int       @default(1) @map("severity_rank")
+  reason          String    @db.VarChar(500)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  resolvedAt      DateTime? @map("resolved_at") @db.Timestamptz(6)
+
+  @@unique([websiteId, sessionId])
+  @@index([websiteId, status, severityRank, updatedAt])
+  @@map("session_review")
+}
+
+/// Trusted ingestion ledger for backend-owned product facts. Public tracker
+/// requests cannot write this table; cockpit metrics use it as their source of
+/// truth instead of trusting an event name supplied by a browser.
+model ServerEventFact {
+  id             String    @id() @map("server_event_fact_id") @db.Uuid
+  websiteId      String    @map("website_id") @db.Uuid
+  keyId          String    @map("key_id") @db.VarChar(80)
+  idempotencyKey String    @map("idempotency_key") @db.VarChar(160)
+  eventName      String    @map("event_name") @db.VarChar(50)
+  distinctId     String    @map("distinct_id") @db.VarChar(50)
+  urlPath        String    @map("url_path") @db.VarChar(500)
+  data           Json?
+  occurredAt     DateTime  @map("occurred_at") @db.Timestamptz(6)
+  projectedAt    DateTime? @map("projected_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([keyId, idempotencyKey])
+  @@index([websiteId, eventName, occurredAt])
+  @@index([websiteId, distinctId, occurredAt])
+  @@map("server_event_fact")
+}
+
 model WebsiteEvent {
   id             String    @id() @map("event_id") @db.Uuid
   websiteId      String    @map("website_id") @db.Uuid

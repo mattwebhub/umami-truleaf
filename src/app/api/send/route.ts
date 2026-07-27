@@ -10,7 +10,29 @@ import { fetchWebsite } from '@/lib/load';
 import { parseRequest } from '@/lib/request';
 import { badRequest, forbidden, json, serverError } from '@/lib/response';
 import { anyObjectParam, urlOrPathParam } from '@/lib/schema';
+import { isServerEventName } from '@/lib/server-events';
+import {
+  getTruleafCaptureAddress,
+  scheduleTruleafNetworkCapture,
+  shouldCaptureTruleafNetwork,
+} from '@/lib/truleaf/capture-source';
+import {
+  isTruleafIdentityProfileEnabled,
+  isTruleafModerationEnabled,
+  isTruleafNetworkCaptureEnabled,
+  isTruleafWebsite,
+} from '@/lib/truleaf/config';
+import {
+  partitionTruleafIdentityProof,
+  scheduleTruleafIdentityProofStorage,
+} from '@/lib/truleaf/identity-proof';
+import { requestTruleafIdentityProfiles } from '@/lib/truleaf/service';
 import { safeDecodeURI, safeDecodeURIComponent } from '@/lib/url';
+import {
+  recordTruleafSessionIdentityProof,
+  recordTruleafSessionNetwork,
+  recordVerifiedSessionIdentity,
+} from '@/queries/prisma';
 import { createSession, saveEvent, saveSessionData } from '@/queries/sql';
 
 interface Cache {
@@ -90,7 +112,7 @@ export async function POST(request: Request) {
       url,
       referrer,
       name,
-      data,
+      data: rawData,
       title,
       tag,
       timestamp,
@@ -101,6 +123,12 @@ export async function POST(request: Request) {
       fcp,
       ttfb,
     } = payload;
+    // Moderation credentials are never analytics properties. Partition once
+    // before branching so custom events and any future generic data path cannot
+    // accidentally persist the reserved field.
+    const { sessionData: data, proof: identityProof } = rawData
+      ? partitionTruleafIdentityProof(rawData)
+      : { sessionData: undefined, proof: undefined };
 
     const sourceId = websiteId || pixelId || linkId;
 
@@ -171,6 +199,23 @@ export async function POST(request: Request) {
       });
     }
 
+    // Truleaf network capture is isolated and fail-open. It runs only on a
+    // cache miss or identity transition, avoiding a write for every event.
+    if (
+      websiteId &&
+      shouldCaptureTruleafNetwork(cache?.sessionId, sessionId) &&
+      isTruleafNetworkCaptureEnabled() &&
+      isTruleafWebsite(websiteId)
+    ) {
+      const captureAddress = getTruleafCaptureAddress(request);
+
+      if (captureAddress) {
+        scheduleTruleafNetworkCapture(() =>
+          recordTruleafSessionNetwork(websiteId, sessionId, captureAddress),
+        );
+      }
+    }
+
     // Visit info
     let visitId = cache?.visitId || uuid(sessionId, visitSalt);
     let iat = cache?.iat || now;
@@ -182,6 +227,10 @@ export async function POST(request: Request) {
     }
 
     if (type === COLLECTION_TYPE.event) {
+      if (name && isServerEventName(name)) {
+        return forbidden({ message: 'This event name is reserved for trusted server ingestion' });
+      }
+
       const base = hostname ? `https://${hostname}` : 'https://localhost';
       const currentUrl = new URL(url, base);
 
@@ -278,13 +327,54 @@ export async function POST(request: Request) {
       });
     } else if (type === COLLECTION_TYPE.identify) {
       if (data) {
-        await saveSessionData({
-          websiteId,
-          sessionId,
-          sessionData: data,
-          distinctId: id,
-          createdAt,
-        });
+        if (
+          identityProof &&
+          websiteId &&
+          id &&
+          (isTruleafModerationEnabled() || isTruleafIdentityProfileEnabled()) &&
+          isTruleafWebsite(websiteId)
+        ) {
+          scheduleTruleafIdentityProofStorage(async () => {
+            const stored = await recordTruleafSessionIdentityProof(
+              websiteId,
+              sessionId,
+              id,
+              identityProof,
+            );
+
+            if (!stored) {
+              return;
+            }
+
+            if (!isTruleafIdentityProfileEnabled()) {
+              return;
+            }
+
+            const { profiles } = await requestTruleafIdentityProfiles([
+              { websiteId, sessionId, distinctId: id, proof: identityProof },
+            ]);
+            const profile = profiles.find(
+              profile =>
+                profile.websiteId === websiteId &&
+                profile.sessionId === sessionId &&
+                profile.distinctId === id,
+            );
+
+            if (profile) {
+              await recordVerifiedSessionIdentity(profile);
+            }
+          });
+        }
+
+        if (Object.keys(data).length) {
+          await saveSessionData({
+            websiteId,
+            sessionId,
+            sessionData: data,
+            distinctId: id,
+            createdAt,
+          });
+        }
       }
     } else if (type === COLLECTION_TYPE.performance) {
       const base = hostname ? `https://${hostname}` : 'https://localhost';

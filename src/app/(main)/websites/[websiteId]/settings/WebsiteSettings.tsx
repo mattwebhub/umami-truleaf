@@ -3,6 +3,7 @@ import { Panel } from '@/components/common/Panel';
 import { WebsiteData } from './WebsiteData';
 import { WebsiteEditForm } from './WebsiteEditForm';
 import { WebsiteReplaySettings } from './WebsiteReplaySettings';
+import { WebsiteServiceApiKeys } from './WebsiteServiceApiKeys';
 import { WebsiteShareForm } from './WebsiteShareForm';
 import { WebsiteTrackingCode } from './WebsiteTrackingCode';
 
@@ -20,6 +21,9 @@ export function WebsiteSettings({ websiteId }: { websiteId: string; openExternal
       </Panel>
       <Panel>
         <WebsiteShareForm websiteId={websiteId} />
+      </Panel>
+      <Panel>
+        <WebsiteServiceApiKeys websiteId={websiteId} />
       </Panel>
       <Panel>
         <WebsiteData websiteId={websiteId} />

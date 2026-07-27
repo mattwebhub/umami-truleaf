@@ -20,6 +20,7 @@ export interface ChartProps extends BoxProps {
   onTooltip?: (model: any) => void;
   hiddenLabels?: Set<string>;
   onLegendClick?: (label: string, willBeHidden: boolean) => void;
+  hideLegend?: boolean;
 }
 
 export function Chart({
@@ -31,6 +32,7 @@ export function Chart({
   chartOptions,
   hiddenLabels,
   onLegendClick,
+  hideLegend = false,
   ...props
 }: ChartProps) {
   const canvas = useRef(null);
@@ -147,7 +149,7 @@ export function Chart({
           <canvas ref={canvas} style={{ position: 'absolute', top: 0, left: 0 }} />
         </div>
       </Box>
-      <Legend items={legendItems} onClick={handleLegendClick} />
+      {!hideLegend && <Legend items={legendItems} onClick={handleLegendClick} />}
     </Column>
   );
 }

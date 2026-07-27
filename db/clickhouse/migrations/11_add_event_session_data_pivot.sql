@@ -13,7 +13,9 @@ CREATE TABLE IF NOT EXISTS umami.event_data_pivot
 ENGINE = AggregatingMergeTree()
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (website_id, event_name, created_at, event_id)
-SETTINGS index_granularity = 8192;
+SETTINGS
+    index_granularity = 8192,
+    allow_dimensions_outside_sorting_key = 1;
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS umami.event_data_pivot_mv
 TO umami.event_data_pivot

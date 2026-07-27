@@ -8,27 +8,38 @@ import {
   TabList,
   TabPanel,
   Tabs,
+  Text,
   TextField,
 } from '@umami/react-zen';
 import { X } from 'lucide-react';
 import { Avatar } from '@/components/common/Avatar';
 import { LoadingPanel } from '@/components/common/LoadingPanel';
 import { useMessages, useWebsiteSessionQuery } from '@/components/hooks';
+import {
+  isServerSession,
+  SERVER_SESSION_DESCRIPTION,
+  SERVER_SESSION_NAME,
+  ServerSessionAvatar,
+} from './ServerSession';
 import { SessionActivity } from './SessionActivity';
 import { SessionData } from './SessionData';
 import { SessionInfo } from './SessionInfo';
 import { SessionReplaysDataTable } from './SessionReplaysDataTable';
+import { SessionReviewControl } from './SessionReviewControl';
 import { SessionStats } from './SessionStats';
+import { TruleafModerationPanel } from './TruleafModerationPanel';
 
 export function SessionProfile({
   websiteId,
   sessionId,
   showReplays = true,
+  reviewsEnabled = false,
   onClose,
 }: {
   websiteId: string;
   sessionId: string;
   showReplays?: boolean;
+  reviewsEnabled?: boolean;
   onClose?: () => void;
 }) {
   const { data, isLoading, error } = useWebsiteSessionQuery(websiteId, sessionId);
@@ -46,7 +57,7 @@ export function SessionProfile({
         <Column gap>
           {onClose && (
             <Row justifyContent="flex-end">
-              <Button onPress={onClose} variant="quiet">
+              <Button onPress={onClose} variant="quiet" aria-label="Close session">
                 <Icon>
                   <X />
                 </Icon>
@@ -54,14 +65,46 @@ export function SessionProfile({
             </Row>
           )}
           <Column gap="6">
-            <Row justifyContent="center" alignItems="center" gap="6">
-              <Avatar seed={data?.id} size={128} />
-              <Column width="360px">
-                <TextField label="ID" value={data?.id} allowCopy />
+            <Row justifyContent="center" alignItems="center" gap="6" wrap="wrap">
+              {isServerSession(data) && !data.identityProfile ? (
+                <ServerSessionAvatar size={128} />
+              ) : (
+                <Avatar
+                  seed={data?.id}
+                  size={128}
+                  src={
+                    data.identityProfile?.hasAvatar
+                      ? `/api/websites/${websiteId}/sessions/${sessionId}/identity-avatar`
+                      : undefined
+                  }
+                  alt={data.identityProfile?.displayName ?? t(labels.unknown)}
+                />
+              )}
+              <Column gap="2" width="100%" maxWidth="420px">
+                <Text size="xl" weight="bold">
+                  {data.identityProfile?.displayName ??
+                    (isServerSession(data) ? SERVER_SESSION_NAME : t(labels.unknown))}
+                </Text>
+                {data.identityProfile && (
+                  <Text color="muted">
+                    @{data.identityProfile.username} · {data.identityProfile.role} ·{' '}
+                    {data.identityProfile.plan}
+                  </Text>
+                )}
+                {isServerSession(data) && !data.identityProfile && (
+                  <Text color="muted">{SERVER_SESSION_DESCRIPTION} · Trusted API</Text>
+                )}
+                <TextField label={t(labels.session)} value={data?.id} allowCopy />
               </Column>
             </Row>
             <SessionStats data={data} />
             <SessionInfo data={data} />
+            {reviewsEnabled && (
+              <Row justifyContent="flex-end">
+                <SessionReviewControl websiteId={websiteId} sessionId={sessionId} />
+              </Row>
+            )}
+            <TruleafModerationPanel websiteId={websiteId} sessionId={sessionId} />
 
             <Tabs>
               <TabList>

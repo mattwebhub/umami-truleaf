@@ -2,7 +2,9 @@ import clickhouse from '@/lib/clickhouse';
 import { EVENT_COLUMNS, EVENT_TYPE, FILTER_COLUMNS } from '@/lib/constants';
 import { CLICKHOUSE, PRISMA, runQuery } from '@/lib/db';
 import prisma from '@/lib/prisma';
+import { isTruleafIdentityProfileEnabled, isTruleafWebsite } from '@/lib/truleaf/config';
 import type { QueryFilters } from '@/lib/types';
+import { getVerifiedIdentityDistinctIdsBySearch } from '@/queries/prisma';
 
 const FUNCTION_NAME = 'getWebsiteSessions';
 const QUALIFIED_FILTER_COLUMNS = Object.fromEntries(
@@ -10,13 +12,23 @@ const QUALIFIED_FILTER_COLUMNS = Object.fromEntries(
 );
 
 export async function getWebsiteSessions(...args: [websiteId: string, filters: QueryFilters]) {
+  const [websiteId, filters] = args;
+  const identityDistinctIds =
+    filters.search && isTruleafIdentityProfileEnabled() && isTruleafWebsite(websiteId)
+      ? await getVerifiedIdentityDistinctIdsBySearch(websiteId, filters.search)
+      : [];
+
   return runQuery({
-    [PRISMA]: () => relationalQuery(...args),
-    [CLICKHOUSE]: () => clickhouseQuery(...args),
+    [PRISMA]: () => relationalQuery(...args, identityDistinctIds),
+    [CLICKHOUSE]: () => clickhouseQuery(...args, identityDistinctIds),
   });
 }
 
-async function relationalQuery(websiteId: string, filters: QueryFilters) {
+async function relationalQuery(
+  websiteId: string,
+  filters: QueryFilters,
+  identityDistinctIds: string[],
+) {
   const { pagedRawQuery, parseFilters } = prisma;
   const { search } = filters;
   const { filterQuery, dateQuery, cohortQuery, queryParams } = parseFilters({
@@ -30,14 +42,17 @@ async function relationalQuery(websiteId: string, filters: QueryFilters) {
            or city ilike {{search}}
            or browser ilike {{search}}
            or os ilike {{search}}
-           or device ilike {{search}})`
+           or device ilike {{search}}
+           ${identityDistinctIds.length ? 'or session.distinct_id = ANY({{identityDistinctIds}})' : ''})`
     : '';
+  const queryParamsWithIdentity = { ...queryParams, identityDistinctIds };
 
   return pagedRawQuery(
     `
     select
       session.session_id as "id",
       session.website_id as "websiteId",
+      session.distinct_id as "distinctId",
       website_event.hostname,
       session.browser,
       session.os,
@@ -64,6 +79,7 @@ async function relationalQuery(websiteId: string, filters: QueryFilters) {
     ${searchQuery}
     group by session.session_id, 
       session.website_id, 
+      session.distinct_id,
       website_event.hostname, 
       session.browser, 
       session.os, 
@@ -75,13 +91,17 @@ async function relationalQuery(websiteId: string, filters: QueryFilters) {
       session.city
     order by max(website_event.created_at) desc
     `,
-    queryParams,
+    queryParamsWithIdentity,
     filters,
     FUNCTION_NAME,
   );
 }
 
-async function clickhouseQuery(websiteId: string, filters: QueryFilters) {
+async function clickhouseQuery(
+  websiteId: string,
+  filters: QueryFilters,
+  identityDistinctIds: string[],
+) {
   const { pagedRawQuery, parseFilters, getDateStringSQL } = clickhouse;
   const { search } = filters;
   const { filterQuery, dateQuery, cohortQuery, queryParams } = parseFilters(
@@ -99,8 +119,14 @@ async function clickhouseQuery(websiteId: string, filters: QueryFilters) {
            or (positionCaseInsensitive(website_event.city, {search:String}) > 0)
            or (positionCaseInsensitive(website_event.browser, {search:String}) > 0)
            or (positionCaseInsensitive(website_event.os, {search:String}) > 0)
-           or (positionCaseInsensitive(website_event.device, {search:String}) > 0))`
+           or (positionCaseInsensitive(website_event.device, {search:String}) > 0)
+           ${
+             identityDistinctIds.length
+               ? 'or website_event.distinct_id IN {identityDistinctIds:Array(String)}'
+               : ''
+})`
     : '';
+  const queryParamsWithIdentity = { ...queryParams, identityDistinctIds };
   const normalizedFilterQuery = filterQuery.replace(
     /referrer_domain != hostname/g,
     'website_event.referrer_domain != website_event.hostname',
@@ -113,6 +139,7 @@ async function clickhouseQuery(websiteId: string, filters: QueryFilters) {
     select
       session_id as id,
       any(website_id) as websiteId,
+      argMax(distinct_id, created_at) as distinctId,
       argMax(hostname, created_at) as hostname,
       argMax(browser, created_at) as browser,
       argMax(os, created_at) as os,
@@ -143,6 +170,7 @@ async function clickhouseQuery(websiteId: string, filters: QueryFilters) {
     select
       session_id as id,
       any(website_id) as websiteId,
+      argMax(distinct_id, max_time) as distinctId,
       argMax(arrayFirst(x -> 1, hostname), max_time) as hostname,
       argMax(browser, max_time) as browser,
       argMax(os, max_time) as os,
@@ -170,5 +198,5 @@ async function clickhouseQuery(websiteId: string, filters: QueryFilters) {
     `;
   }
 
-  return pagedRawQuery(sql, queryParams, filters, FUNCTION_NAME);
+  return pagedRawQuery(sql, queryParamsWithIdentity, filters, FUNCTION_NAME);
 }

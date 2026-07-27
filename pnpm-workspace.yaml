@@ -2,6 +2,9 @@ packages:
   - '**'
   - '!dist'
   - '!**/dist/**'
+overrides:
+  # Keep the MCP SDK's broad range on a release old enough for our supply-chain policy.
+  express-rate-limit: 8.6.0
 allowBuilds:
   '@parcel/watcher': false
   '@prisma/engines': true

@@ -69,6 +69,10 @@ COPY --from=builder /app/generated ./generated
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
+# Prisma validates and may update its engine artifacts during `migrate deploy`.
+# Keep the runtime unprivileged while allowing that startup check to complete.
+RUN chown -R nextjs:nodejs /app/node_modules
+
 USER nextjs
 
 EXPOSE 3000

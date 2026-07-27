@@ -72,6 +72,20 @@ jobs:
     name: Verify immutable image evidence
     needs: build
     runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: umami_runtime
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d umami_runtime"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     permissions:
       contents: read
       packages: read
@@ -121,6 +135,37 @@ jobs:
             any(.manifests[]; .platform.os == "linux" and .platform.architecture == "amd64") and
             any(.manifests[]; .platform.os == "linux" and .platform.architecture == "arm64")
           ' <<< "$manifest_json"
+
+      - name: Smoke-test runtime startup and migrations
+        env:
+          IMAGE_DIGEST: ${{ needs.build.outputs.digest }}
+          IMAGE_NAME: ghcr.io/${{ github.repository }}
+        run: |
+          container_id="$(
+            docker run --detach --network host \
+              --env APP_SECRET=truleaf-runtime-smoke-secret \
+              --env DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/umami_runtime \
+              "$IMAGE_NAME@$IMAGE_DIGEST"
+          )"
+          cleanup() {
+            docker logs "$container_id" || true
+            docker rm --force "$container_id" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:3000/api/heartbeat >/dev/null; then
+              exit 0
+            fi
+            if [[ "$(docker inspect --format '{{.State.Running}}' "$container_id")" != "true" ]]; then
+              echo "Runtime container exited before becoming healthy"
+              exit 1
+            fi
+            sleep 2
+          done
+
+          echo "Runtime container did not become healthy within 60 seconds"
+          exit 1
 
       - name: Record release evidence
         env:

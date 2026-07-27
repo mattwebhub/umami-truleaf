@@ -6,6 +6,7 @@ import { LoadingPanel } from '@/components/common/LoadingPanel';
 import { Panel } from '@/components/common/Panel';
 import { useApi, useDateParameters, useFilterParameters, useWebsite } from '@/components/hooks';
 import type { ProductCockpitConfig } from '@/lib/product-cockpit/config';
+import { ProductBarChart } from './ProductBarChart';
 
 type Metric = {
   id: string;
@@ -53,9 +54,10 @@ type CockpitData = {
     current: { lcp: number; inp: number; cls: number; count: number };
     previous: { lcp: number; inp: number; cls: number; count: number };
   };
-  moderation: { openReviews: number };
+  moderation: { openReviews: number } | null;
   content: {
     current: Array<{ contentId: string; views: number; engaged: number }>;
+    previous: Array<{ contentId: string; views: number; engaged: number }>;
   } | null;
 };
 
@@ -67,6 +69,14 @@ function change(current: number, previous: number) {
   if (!previous) return current ? 'new in this period' : 'no prior-period activity';
   const percent = ((current - previous) / previous) * 100;
   return `${percent >= 0 ? '+' : ''}${percent.toFixed(1)}% vs prior period`;
+}
+
+function compactLabel(value: string, maxLength = 36) {
+  return value.length > maxLength ? `${value.slice(0, maxLength - 1)}…` : value;
+}
+
+export function canShowReviewQueue(moderation: CockpitData['moderation'], canUpdate: boolean) {
+  return moderation !== null && canUpdate;
 }
 
 function MetricValue({
@@ -212,21 +222,20 @@ export function ProductCockpit({
                     <Text color="muted" size="sm">
                       Unique-session reach; use the native funnel for ordered conversion.
                     </Text>
-                    {funnel.steps.map((step, index) => {
-                      const previous = funnel.steps[index - 1]?.sessions;
-                      const rate = previous ? (step.sessions / previous) * 100 : null;
-                      return (
-                        <Row key={`${funnel.id}:${step.label}`} justifyContent="space-between">
-                          <Text color="muted">
-                            {index + 1}. {step.label}
-                          </Text>
-                          <Text>
-                            {formatCount(step.sessions)}
-                            {rate !== null ? ` · ${rate.toFixed(1)}%` : ''}
-                          </Text>
-                        </Row>
-                      );
-                    })}
+                    <ProductBarChart
+                      accessibleLabel={`${funnel.label} unique-session reach`}
+                      horizontal
+                      height="220px"
+                      labels={funnel.steps.map(
+                        (step, index) => `${index + 1}. ${compactLabel(step.label, 28)}`,
+                      )}
+                      series={[
+                        {
+                          label: 'Unique sessions',
+                          values: funnel.steps.map(step => step.sessions),
+                        },
+                      ]}
+                    />
                   </Column>
                 </Panel>
               ))}
@@ -237,12 +246,23 @@ export function ProductCockpit({
                   <Text color="muted" size="sm">
                     Return sessions by first-seen cohort in this range.
                   </Text>
+                  <ProductBarChart
+                    accessibleLabel="Return rate by first-seen cohort day"
+                    percent
+                    height="220px"
+                    labels={query.data.retention.map(item => `Day ${item.day}`)}
+                    series={[
+                      {
+                        label: 'Return rate',
+                        values: query.data.retention.map(item => item.rate),
+                      },
+                    ]}
+                  />
                   {query.data.retention.map(item => (
                     <Row key={item.day} justifyContent="space-between">
                       <Text color="muted">Day {item.day}</Text>
                       <Text>
-                        {item.rate.toFixed(1)}% · {formatCount(item.returned)} of{' '}
-                        {formatCount(item.cohort)}
+                        {formatCount(item.returned)} returned of {formatCount(item.cohort)}
                       </Text>
                     </Row>
                   ))}
@@ -253,7 +273,8 @@ export function ProductCockpit({
                 <Column gap>
                   <Heading size="lg">Core Web Vitals · p75</Heading>
                   <Text color="muted" size="sm">
-                    {formatCount(query.data.performance.current.count)} performance samples
+                    {formatCount(query.data.performance.current.count)} performance samples · lower
+                    is better for LCP and INP
                   </Text>
                   {(['lcp', 'inp', 'cls'] as const).map(vital => (
                     <Row key={vital} justifyContent="space-between">
@@ -262,6 +283,7 @@ export function ProductCockpit({
                         {Number(query.data.performance.current[vital] ?? 0).toFixed(
                           vital === 'cls' ? 3 : 0,
                         )}
+                        {vital === 'cls' ? '' : ' ms'}
                         {' · '}
                         {change(
                           Number(query.data.performance.current[vital] ?? 0),
@@ -281,25 +303,38 @@ export function ProductCockpit({
               <Panel>
                 <Column gap>
                   <Heading size="lg">Feature adoption</Heading>
-                  {query.data.features.map(feature => (
-                    <Row key={feature.id} justifyContent="space-between">
-                      <Text color="muted">{feature.label}</Text>
-                      <Text>{formatCount(feature.sessions)} unique sessions</Text>
-                    </Row>
-                  ))}
+                  <Text color="muted" size="sm">
+                    Unique browser sessions reaching each configured feature.
+                  </Text>
+                  <ProductBarChart
+                    accessibleLabel="Feature adoption by unique browser sessions"
+                    horizontal
+                    height={`${Math.max(260, query.data.features.length * 42)}px`}
+                    labels={query.data.features.map(feature => compactLabel(feature.label, 30))}
+                    series={[
+                      {
+                        label: 'Unique sessions',
+                        values: query.data.features.map(feature => feature.sessions),
+                      },
+                    ]}
+                  />
                 </Column>
               </Panel>
 
-              <Panel>
-                <Column gap>
-                  <Heading size="lg">Moderation review queue</Heading>
-                  <Heading size="3xl">{formatCount(query.data.moderation.openReviews)}</Heading>
-                  <Text color="muted">
-                    Operator-authored reviews; no ban is inferred from analytics.
-                  </Text>
-                  <Link href={`/websites/${websiteId}/sessions`}>Open review queue</Link>
-                </Column>
-              </Panel>
+              {canShowReviewQueue(query.data.moderation, website.canUpdate) && (
+                <Panel>
+                  <Column gap>
+                    <Heading size="lg">Moderation review queue</Heading>
+                    <Heading size="3xl">
+                      {formatCount(query.data.moderation?.openReviews ?? 0)}
+                    </Heading>
+                    <Text color="muted">
+                      Operator-authored reviews; no ban is inferred from analytics.
+                    </Text>
+                    <Link href={`/websites/${websiteId}/sessions`}>Open review queue</Link>
+                  </Column>
+                </Panel>
+              )}
             </Grid>
 
             {query.data.content && (
@@ -310,15 +345,24 @@ export function ProductCockpit({
                     Browser-observed content events. Open native reports for unique-reader journeys
                     and assisted conversion.
                   </Text>
-                  {query.data.content.current.map(item => (
-                    <Row key={item.contentId} justifyContent="space-between">
-                      <Text color="muted">{item.contentId}</Text>
-                      <Text>
-                        {formatCount(item.views)} views · {formatCount(item.engaged)} engagement
-                        milestones
-                      </Text>
-                    </Row>
-                  ))}
+                  <ProductBarChart
+                    accessibleLabel="Content views and engagement milestones"
+                    horizontal
+                    height={`${Math.max(300, query.data.content.current.length * 48)}px`}
+                    labels={query.data.content.current.map(item =>
+                      compactLabel(item.contentId, 34),
+                    )}
+                    series={[
+                      {
+                        label: 'Views',
+                        values: query.data.content.current.map(item => item.views),
+                      },
+                      {
+                        label: 'Engagement milestones',
+                        values: query.data.content.current.map(item => item.engaged),
+                      },
+                    ]}
+                  />
                 </Column>
               </Panel>
             )}

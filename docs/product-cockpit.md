@@ -1,8 +1,10 @@
 # Product cockpit
 
-The product cockpit is an optional, configuration-driven website overview for
-product outcomes. It adds no product-specific event names to Umami and remains
-disabled when no valid configuration is present.
+The product cockpit is an optional, configuration-driven Product Health tab for
+product outcomes. It appears immediately after Overview only for configured
+websites, leaves the standard traffic Overview unchanged, and adds no
+product-specific event names to Umami. It remains disabled when no valid
+configuration is present.
 
 ## Capabilities
 
@@ -15,8 +17,11 @@ disabled when no valid configuration is present.
 - a manual session-review queue;
 - runtime route exclusions for replay and heatmap capture.
 
-Normal website and team permissions apply. The aggregate response does not
-include distinct IDs, raw network values, or session-level records.
+The tab and aggregate endpoint require an authenticated website member; share
+tokens are intentionally denied. Read-only members may view product aggregates,
+while workspace preparation and session-review data/actions require website
+update permission. The aggregate response does not include distinct IDs, raw
+network values, or session-level records.
 
 ## Configuration
 

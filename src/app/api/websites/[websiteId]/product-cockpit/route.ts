@@ -6,7 +6,7 @@ import { getQueryFilters, parseRequest } from '@/lib/request';
 import { json, unauthorized } from '@/lib/response';
 import { filterParams, withDateRange } from '@/lib/schema';
 import type { QueryFilters } from '@/lib/types';
-import { canViewWebsiteSection } from '@/permissions';
+import { canUpdateWebsite, canViewAuthenticatedWebsite } from '@/permissions';
 import { getWebsiteEventStats } from '@/queries/sql/events/getWebsiteEventStats';
 import { getWebsiteStats } from '@/queries/sql/getWebsiteStats';
 import { getPerformanceStats } from '@/queries/sql/performance/getPerformanceStats';
@@ -121,10 +121,11 @@ export async function GET(
   if (error) return error();
 
   const { websiteId } = await params;
-  if (!(await canViewWebsiteSection(auth, websiteId, 'overview'))) return unauthorized();
+  if (!(await canViewAuthenticatedWebsite(auth, websiteId))) return unauthorized();
 
   const config = getProductCockpitConfig(websiteId);
   if (!config) return json({ enabled: false });
+  const canModerate = await canUpdateWebsite(auth, websiteId);
 
   const current = await getQueryFilters(query, websiteId);
   const comparisonDates = getCompareDate('prev', current.startDate, current.endDate);
@@ -182,7 +183,9 @@ export async function GET(
       { startDate: current.startDate, endDate: current.endDate, timezone: current.timezone },
       current,
     ),
-    prisma.client.sessionReview.count({ where: { websiteId, status: 'open' } }),
+    canModerate
+      ? prisma.client.sessionReview.count({ where: { websiteId, status: 'open' } })
+      : Promise.resolve(null),
     content
       ? getContentSummary({
           websiteId,
@@ -270,7 +273,7 @@ export async function GET(
       current: performance,
       previous: previousPerformance,
     },
-    moderation: { openReviews: reviews },
+    moderation: canModerate ? { openReviews: reviews } : null,
     content: content
       ? {
           current: contentSummary?.current ?? [],

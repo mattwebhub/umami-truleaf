@@ -10,13 +10,49 @@ import {
   UserPlus,
   Video,
 } from '@/components/icons';
-import { Funnel, Gauge, Lightning, Magnet, Money, Network, Path, Target } from '@/components/svg';
+import {
+  Dashboard,
+  Funnel,
+  Gauge,
+  Lightning,
+  Magnet,
+  Money,
+  Network,
+  Path,
+  Target,
+} from '@/components/svg';
+import { useWebsiteQuery } from './queries/useWebsiteQuery';
 import { useMessages } from './useMessages';
 import { useNavigation } from './useNavigation';
+
+export function getProductHealthNavItems(
+  enabled: boolean | undefined,
+  renderPath: (path: string) => string,
+  label: string,
+) {
+  return enabled
+    ? [
+        {
+          id: 'product-health',
+          label,
+          icon: <Dashboard />,
+          path: renderPath('/product-health'),
+        },
+      ]
+    : [];
+}
+
+export function hasProductHealthCapability(
+  website: { id?: string; productCockpitEnabled?: boolean } | null | undefined,
+  websiteId: string,
+) {
+  return website?.id === websiteId && website.productCockpitEnabled === true;
+}
 
 export function useWebsiteNavItems(websiteId: string) {
   const { t, labels } = useMessages();
   const { pathname, renderUrl } = useNavigation();
+  const { data: website } = useWebsiteQuery(websiteId);
 
   const renderPath = (path: string) =>
     renderUrl(`/websites/${websiteId}${path}`, {
@@ -37,6 +73,11 @@ export function useWebsiteNavItems(websiteId: string) {
           icon: <Eye />,
           path: renderPath(''),
         },
+        ...getProductHealthNavItems(
+          hasProductHealthCapability(website, websiteId),
+          renderPath,
+          t(labels.productHealth),
+        ),
         {
           id: 'events',
           label: t(labels.events),

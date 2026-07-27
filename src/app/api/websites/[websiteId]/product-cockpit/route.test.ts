@@ -1,6 +1,7 @@
 import { beforeEach, expect, test, vi } from 'vitest';
 import prisma from '@/lib/prisma';
-import { canViewWebsiteSection } from '@/permissions';
+import { parseRequest } from '@/lib/request';
+import { canUpdateWebsite, canViewAuthenticatedWebsite } from '@/permissions';
 import { getWebsiteEventStats } from '@/queries/sql/events/getWebsiteEventStats';
 import { GET } from './route';
 
@@ -11,16 +12,7 @@ vi.mock('@/lib/prisma', () => ({
   },
 }));
 vi.mock('@/lib/request', () => ({
-  parseRequest: vi.fn(async (request: Request) => {
-    const url = new URL(request.url);
-    return {
-      auth: { user: { id: 'operator' } },
-      query: {
-        startAt: Number(url.searchParams.get('startAt')),
-        endAt: Number(url.searchParams.get('endAt')),
-      },
-    };
-  }),
+  parseRequest: vi.fn(),
   getQueryFilters: vi.fn(async query => ({
     startDate: new Date(query.startAt),
     endDate: new Date(query.endAt),
@@ -29,7 +21,8 @@ vi.mock('@/lib/request', () => ({
   })),
 }));
 vi.mock('@/permissions', () => ({
-  canViewWebsiteSection: vi.fn(),
+  canViewAuthenticatedWebsite: vi.fn(),
+  canUpdateWebsite: vi.fn(),
 }));
 vi.mock('@/queries/sql/events/getWebsiteEventStats', () => ({
   getWebsiteEventStats: vi.fn(),
@@ -62,7 +55,18 @@ const websiteId = 'e79ef216-70ab-48df-addc-596b6e9e65a8';
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(canViewWebsiteSection).mockResolvedValue(true);
+  vi.mocked(parseRequest).mockImplementation(async (request: Request) => {
+    const url = new URL(request.url);
+    return {
+      auth: { user: { id: 'operator' } },
+      query: {
+        startAt: Number(url.searchParams.get('startAt')),
+        endAt: Number(url.searchParams.get('endAt')),
+      },
+    } as never;
+  });
+  vi.mocked(canViewAuthenticatedWebsite).mockResolvedValue(true);
+  vi.mocked(canUpdateWebsite).mockResolvedValue(true);
   vi.mocked(prisma.client.sessionReview.count).mockResolvedValue(3);
   vi.mocked(prisma.rawQuery).mockResolvedValue([{ events: 2, accounts: 2 }]);
   vi.mocked(getWebsiteEventStats).mockImplementation(async (_websiteId, filters) => {
@@ -99,6 +103,22 @@ beforeEach(() => {
       },
     ],
   });
+});
+
+test('does not expose moderation state to a read-only website member', async () => {
+  vi.mocked(canUpdateWebsite).mockResolvedValueOnce(false);
+
+  const response = await GET(
+    new Request(
+      `http://localhost/api/websites/${websiteId}/product-cockpit?startAt=1785024000000&endAt=1785110400000`,
+      { headers: { authorization: 'Bearer test' } },
+    ),
+    { params: Promise.resolve({ websiteId }) },
+  );
+
+  expect(response.status).toBe(200);
+  await expect(response.json()).resolves.toMatchObject({ moderation: null });
+  expect(prisma.client.sessionReview.count).not.toHaveBeenCalled();
 });
 
 test('returns bounded, permissioned product math with explicit provenance and denominators', async () => {
@@ -140,8 +160,18 @@ test('returns bounded, permissioned product math with explicit provenance and de
   expect(prisma.rawQuery).toHaveBeenCalled();
 });
 
-test('requires overview permission before running aggregate queries', async () => {
-  vi.mocked(canViewWebsiteSection).mockResolvedValueOnce(false);
+test('requires authenticated website access before running aggregate queries', async () => {
+  vi.mocked(canViewAuthenticatedWebsite).mockResolvedValueOnce(false);
+  vi.mocked(parseRequest).mockResolvedValueOnce({
+    auth: {
+      user: null,
+      shareToken: { websiteId, parameters: { overview: true } },
+    },
+    query: {
+      startAt: 1785024000000,
+      endAt: 1785110400000,
+    },
+  } as never);
 
   const response = await GET(
     new Request(
@@ -152,4 +182,8 @@ test('requires overview permission before running aggregate queries', async () =
 
   expect(response.status).toBe(401);
   expect(getWebsiteEventStats).not.toHaveBeenCalled();
+  expect(canViewAuthenticatedWebsite).toHaveBeenCalledWith(
+    expect.objectContaining({ user: null }),
+    websiteId,
+  );
 });

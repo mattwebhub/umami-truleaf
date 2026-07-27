@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { Prisma } from '@/generated/prisma/client';
 import { ENTITY_TYPE } from '@/lib/constants';
 import { uuid } from '@/lib/crypto';
+import { getProductCockpitConfig } from '@/lib/product-cockpit/config';
 import { getRecorderConfig, getRecorderEnabled } from '@/lib/recorder';
 import { parseRequest } from '@/lib/request';
 import { badRequest, json, ok, serverError, unauthorized } from '@/lib/response';
@@ -36,6 +37,7 @@ export async function GET(
   return json({
     ...website,
     canUpdate: await canUpdateWebsite(auth, websiteId),
+    productCockpitEnabled: Boolean(auth?.user && getProductCockpitConfig(websiteId)),
   });
 }
 

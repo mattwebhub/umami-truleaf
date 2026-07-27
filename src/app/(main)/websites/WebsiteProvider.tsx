@@ -4,7 +4,10 @@ import { createContext, type ReactNode } from 'react';
 import { useWebsiteQuery } from '@/components/hooks/queries/useWebsiteQuery';
 import type { Website } from '@/generated/prisma/client';
 
-export type WebsiteContextValue = Website & { canUpdate: boolean };
+export type WebsiteContextValue = Website & {
+  canUpdate: boolean;
+  productCockpitEnabled: boolean;
+};
 
 export const WebsiteContext = createContext<WebsiteContextValue>(null);
 

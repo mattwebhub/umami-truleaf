@@ -4,6 +4,7 @@ import prisma from '@/lib/prisma';
 import redis from '@/lib/redis';
 import { sanitizeSortFilters } from '@/lib/sort';
 import type { QueryFilters } from '@/lib/types';
+import { revokeServiceApiKeysForLifecycle } from './serviceApiKey';
 
 const WEBSITE_SORT_FIELDS = ['name', 'domain', 'createdAt'] as const;
 
@@ -263,6 +264,8 @@ export async function deleteWebsite(websiteId: string) {
       await tx.share.deleteMany({
         where: { entityId: websiteId },
       });
+
+      await revokeServiceApiKeysForLifecycle(tx, { websiteId }, 'website-deleted');
 
       const website = cloudMode
         ? await tx.website.update({

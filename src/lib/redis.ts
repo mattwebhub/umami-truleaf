@@ -8,7 +8,7 @@ export const DEFAULT_TTL = 3600;
 
 const logError = (err: unknown) => log(err);
 
-class UmamiRedisClient {
+export class UmamiRedisClient {
   url: string;
   client: RedisClientType;
   isConnected: boolean;
@@ -69,16 +69,24 @@ class UmamiRedisClient {
     return this.client.expire(key, seconds);
   }
 
-  async rateLimit(key: string, limit: number, seconds: number): Promise<boolean> {
+  async rateLimit(key: string, limit: number, seconds: number, cost = 1): Promise<boolean> {
     await this.connect();
 
-    const res = await this.client.incr(key);
+    const res = await this.client.eval(
+      `
+      local current = redis.call('INCRBY', KEYS[1], ARGV[1])
+      if current == tonumber(ARGV[1]) then
+        redis.call('EXPIRE', KEYS[1], ARGV[2])
+      end
+      return current
+      `,
+      {
+        keys: [key],
+        arguments: [String(cost), String(seconds)],
+      },
+    );
 
-    if (res === 1) {
-      await this.client.expire(key, seconds);
-    }
-
-    return res >= limit;
+    return Number(res) >= limit;
   }
 
   async fetch(key: string, query: () => Promise<any>, time?: number) {

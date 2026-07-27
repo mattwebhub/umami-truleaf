@@ -97,6 +97,62 @@ model Website {
   @@map("website")
 }
 
+/// Revocable, website-scoped credential for machine-to-machine analytics access.
+/// Only a keyed digest and a short display prefix are persisted; the plaintext
+/// secret is returned once when the key is created.
+model ServiceApiKey {
+  id              String    @id() @map("service_api_key_id") @db.Uuid
+  websiteId       String    @map("website_id") @db.Uuid
+  name            String    @db.VarChar(100)
+  keyPrefix       String    @unique @map("key_prefix") @db.VarChar(24)
+  keyHash         String    @map("key_hash") @db.Char(64)
+  scopes          Json
+  createdByUserId String    @map("created_by_user_id") @db.Uuid
+  expiresAt       DateTime? @map("expires_at") @db.Timestamptz(6)
+  revokedAt       DateTime? @map("revoked_at") @db.Timestamptz(6)
+  lastUsedAt      DateTime? @map("last_used_at") @db.Timestamptz(6)
+  rateLimitWindowAt DateTime? @map("rate_limit_window_at") @db.Timestamptz(6)
+  rateLimitCount    Int       @default(0) @map("rate_limit_count")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([websiteId, createdAt])
+  @@index([expiresAt])
+  @@map("service_api_key")
+}
+
+/// Minimal operational audit trail for service-key lifecycle and agent queries.
+/// It intentionally excludes request filters, results, tokens, IP addresses,
+/// and session or identity data.
+model ServiceApiKeyAudit {
+  id         String   @id() @map("service_api_key_audit_id") @db.Uuid
+  keyId      String   @map("service_api_key_id") @db.Uuid
+  websiteId  String?  @map("website_id") @db.Uuid
+  action     String   @db.VarChar(32)
+  reason     String?  @db.VarChar(32)
+  queryType  String?  @map("query_type") @db.VarChar(32)
+  status     String   @db.VarChar(20)
+  durationMs Int?     @map("duration_ms")
+  requestId  String   @map("request_id") @db.VarChar(64)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([keyId, createdAt])
+  @@index([websiteId, createdAt])
+  @@map("service_api_key_audit")
+}
+
+/// Coarse, pseudonymous ingress limiter used before service-key authentication.
+/// The HMAC cannot be used to recover the observed network address.
+model AgentApiIngressWindow {
+  fingerprint String   @id() @db.Char(64)
+  windowAt    DateTime @map("window_at") @db.Timestamptz(6)
+  count       Int      @default(0)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([updatedAt])
+  @@map("agent_api_ingress_window")
+}
+
 /// Truleaf-only, encrypted network observations used by the moderation integration.
 /// This table is deliberately separate from Umami's core session model so the fork can
 /// be rolled back to an upstream image without changing upstream analytics data.

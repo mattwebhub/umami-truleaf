@@ -3,16 +3,18 @@ import {
   deleteExpiredTruleafSessionAccountBanReferences,
   deleteExpiredTruleafSessionIdentities,
   deleteExpiredTruleafSessionNetworks,
+  deleteExpiredVerifiedIdentityProfiles,
 } from '@/queries/prisma';
 
 async function main() {
-  const [networks, identities, accountBanReferences] = await Promise.all([
+  const [networks, identities, accountBanReferences, identityProfiles] = await Promise.all([
     deleteExpiredTruleafSessionNetworks(),
     deleteExpiredTruleafSessionIdentities(),
     deleteExpiredTruleafSessionAccountBanReferences(),
+    deleteExpiredVerifiedIdentityProfiles(),
   ]);
   console.log(
-    `Deleted ${networks.count} expired Truleaf network mapping(s), ${identities.count} identity proof(s), and ${accountBanReferences.count} expired account ban reference(s).`,
+    `Deleted ${networks.count} expired Truleaf network mapping(s), ${identities.count} identity proof(s), ${identityProfiles.count} verified identity profile(s), and ${accountBanReferences.count} expired account ban reference(s).`,
   );
 }
 

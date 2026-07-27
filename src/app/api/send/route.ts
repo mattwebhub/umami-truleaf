@@ -17,6 +17,7 @@ import {
   shouldCaptureTruleafNetwork,
 } from '@/lib/truleaf/capture-source';
 import {
+  isTruleafIdentityProfileEnabled,
   isTruleafModerationEnabled,
   isTruleafNetworkCaptureEnabled,
   isTruleafWebsite,
@@ -25,8 +26,13 @@ import {
   partitionTruleafIdentityProof,
   scheduleTruleafIdentityProofStorage,
 } from '@/lib/truleaf/identity-proof';
+import { requestTruleafIdentityProfiles } from '@/lib/truleaf/service';
 import { safeDecodeURI, safeDecodeURIComponent } from '@/lib/url';
-import { recordTruleafSessionIdentityProof, recordTruleafSessionNetwork } from '@/queries/prisma';
+import {
+  recordTruleafSessionIdentityProof,
+  recordTruleafSessionNetwork,
+  recordVerifiedSessionIdentity,
+} from '@/queries/prisma';
 import { createSession, saveEvent, saveSessionData } from '@/queries/sql';
 
 interface Cache {
@@ -325,12 +331,39 @@ export async function POST(request: Request) {
           identityProof &&
           websiteId &&
           id &&
-          isTruleafModerationEnabled() &&
+          (isTruleafModerationEnabled() || isTruleafIdentityProfileEnabled()) &&
           isTruleafWebsite(websiteId)
         ) {
-          scheduleTruleafIdentityProofStorage(() =>
-            recordTruleafSessionIdentityProof(websiteId, sessionId, id, identityProof),
-          );
+          scheduleTruleafIdentityProofStorage(async () => {
+            const stored = await recordTruleafSessionIdentityProof(
+              websiteId,
+              sessionId,
+              id,
+              identityProof,
+            );
+
+            if (!stored) {
+              return;
+            }
+
+            if (!isTruleafIdentityProfileEnabled()) {
+              return;
+            }
+
+            const { profiles } = await requestTruleafIdentityProfiles([
+              { websiteId, sessionId, distinctId: id, proof: identityProof },
+            ]);
+            const profile = profiles.find(
+              profile =>
+                profile.websiteId === websiteId &&
+                profile.sessionId === sessionId &&
+                profile.distinctId === id,
+            );
+
+            if (profile) {
+              await recordVerifiedSessionIdentity(profile);
+            }
+          });
         }
 
         if (Object.keys(data).length) {

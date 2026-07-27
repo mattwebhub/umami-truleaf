@@ -6,6 +6,7 @@ import { getProductCockpitConfig } from '@/lib/product-cockpit/config';
 import { getRecorderConfig, getRecorderEnabled } from '@/lib/recorder';
 import { parseRequest } from '@/lib/request';
 import { badRequest, json, ok, serverError, unauthorized } from '@/lib/response';
+import { getWebsiteBrand } from '@/lib/website-branding/config';
 import { canDeleteWebsite, canUpdateWebsite, canViewSharedWebsite } from '@/permissions';
 import {
   createShare,
@@ -38,6 +39,7 @@ export async function GET(
     ...website,
     canUpdate: await canUpdateWebsite(auth, websiteId),
     productCockpitEnabled: Boolean(auth?.user && getProductCockpitConfig(websiteId)),
+    websiteBrand: auth?.user ? getWebsiteBrand(websiteId) : null,
   });
 }
 

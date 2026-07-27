@@ -16,10 +16,43 @@ export interface ModerationSource {
 }
 
 interface ServiceRequest {
-  path: '/api/v1/internal/moderation/status' | '/api/v1/internal/moderation/actions';
+  path:
+    | '/api/v1/internal/moderation/status'
+    | '/api/v1/internal/moderation/actions'
+    | '/api/v1/internal/moderation/identity-profiles';
   body: Record<string, unknown>;
   schema: z.ZodType;
 }
+
+export interface IdentityProfileRequest {
+  websiteId: string;
+  sessionId: string;
+  distinctId: string;
+  proof: string;
+}
+
+const identityProfileSchema = z.object({
+  websiteId: z.uuid(),
+  sessionId: z.uuid(),
+  distinctId: z.string().min(1).max(50),
+  displayName: z.string().min(1).max(100),
+  username: z.string().min(1).max(50),
+  avatarUrl: z
+    .url()
+    .max(2183)
+    .refine(value => value.startsWith('https:'), 'Avatar URL must use HTTPS')
+    .optional(),
+  role: z.enum(['user', 'admin', 'expert', 'creator']),
+  plan: z.enum(['free', 'premium', 'professional']),
+  profileVersion: z.iso.datetime(),
+  verifiedUntil: z.iso.datetime(),
+});
+
+export const identityProfilesSchema = z.object({
+  profiles: z.array(identityProfileSchema).max(100),
+});
+
+export type VerifiedIdentityProfileResponse = z.infer<typeof identityProfileSchema>;
 
 export const moderationTargetStatusSchema = z.object({
   type: z.enum(['account', 'ip']),
@@ -191,4 +224,12 @@ export async function requestTruleafModeration<T extends z.ZodType>({
   }
 
   return parsed.data;
+}
+
+export function requestTruleafIdentityProfiles(identities: IdentityProfileRequest[]) {
+  return requestTruleafModeration({
+    path: '/api/v1/internal/moderation/identity-profiles',
+    body: { identities },
+    schema: identityProfilesSchema,
+  });
 }

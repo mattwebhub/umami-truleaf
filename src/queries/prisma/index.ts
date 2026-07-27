@@ -12,4 +12,5 @@ export * from './truleafSessionAccountBanReference';
 export * from './truleafSessionIdentity';
 export * from './truleafSessionNetwork';
 export * from './user';
+export * from './verifiedIdentityProfile';
 export * from './website';

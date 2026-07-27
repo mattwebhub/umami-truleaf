@@ -186,10 +186,52 @@ model TruleafSessionIdentity {
   encryptionKeyVersion String   @map("encryption_key_version") @db.VarChar(32)
   expiresAt            DateTime @map("expires_at") @db.Timestamptz(6)
   updatedAt            DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  profileRetryAt       DateTime? @map("profile_retry_at") @db.Timestamptz(6)
+  profileAttemptCount  Int      @default(0) @map("profile_attempt_count")
+  profileLastAttemptAt DateTime? @map("profile_last_attempt_at") @db.Timestamptz(6)
 
   @@unique([websiteId, sessionId])
   @@index([expiresAt])
+  @@index([profileRetryAt])
   @@map("truleaf_session_identity")
+}
+
+/// Server-verified account presentation data. Browser-provided identify
+/// properties never populate this table.
+model VerifiedIdentityProfile {
+  id             String   @id() @map("identity_profile_id") @db.Uuid
+  websiteId      String   @map("website_id") @db.Uuid
+  distinctId     String   @map("distinct_id") @db.VarChar(50)
+  displayName    String   @map("display_name") @db.VarChar(100)
+  username       String   @db.VarChar(50)
+  avatarUrl      String?  @map("avatar_url") @db.VarChar(2183)
+  role           String   @db.VarChar(50)
+  plan           String   @db.VarChar(50)
+  profileVersion String   @map("profile_version") @db.VarChar(64)
+  verifiedUntil  DateTime @map("verified_until") @db.Timestamptz(6)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  sessions       VerifiedSessionIdentity[]
+
+  @@unique([websiteId, distinctId])
+  @@index([verifiedUntil])
+  @@index([websiteId, updatedAt])
+  @@map("verified_identity_profile")
+}
+
+/// Proof-backed binding between an analytics session and a verified profile.
+/// No relation to Session is declared because ClickHouse can own session data.
+model VerifiedSessionIdentity {
+  id         String   @id() @map("session_identity_id") @db.Uuid
+  websiteId  String   @map("website_id") @db.Uuid
+  sessionId  String   @map("session_id") @db.Uuid
+  distinctId String   @map("distinct_id") @db.VarChar(50)
+  verifiedAt DateTime @default(now()) @map("verified_at") @db.Timestamptz(6)
+  profile    VerifiedIdentityProfile @relation(fields: [websiteId, distinctId], references: [websiteId, distinctId], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([websiteId, sessionId])
+  @@index([websiteId, distinctId])
+  @@map("verified_session_identity")
 }
 
 /// Encrypted, source-bound opaque reference to an active Truleaf account ban.

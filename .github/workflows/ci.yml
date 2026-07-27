@@ -31,3 +31,45 @@ jobs:
       - run: pnpm test
       - run: pnpm exec tsc --noEmit
       - run: pnpm build
+
+  truleaf-identity-e2e:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: umami_e2e
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d umami_e2e"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      APP_SECRET: truleaf-ci-app-secret
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/umami_e2e
+      IDENTITY_AVATAR_ALLOWED_HOSTS: lh3.googleusercontent.com
+      TRULEAF_BRAND_E2E: 1
+      TRULEAF_IDENTITY_PROFILE_ENABLED: "true"
+      TRULEAF_WEBSITE_IDS: e79ef216-70ab-48df-addc-596b6e9e65a8
+      WEBSITE_BRANDING_CONFIG: >-
+        {"websites":[{"websiteId":"e79ef216-70ab-48df-addc-596b6e9e65a8","profile":"truleaf"}]}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+          run_install: false
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "pnpm"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build-db
+      - run: pnpm exec prisma migrate deploy
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm exec playwright test tests/e2e/truleaf-brand-identity.spec.ts --project=chromium

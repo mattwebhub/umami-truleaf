@@ -168,6 +168,12 @@ export async function deleteUser(userId: string) {
       client.truleafSessionIdentity.deleteMany({
         where: { websiteId: { in: websiteIds } },
       }),
+      client.verifiedSessionIdentity.deleteMany({
+        where: { websiteId: { in: websiteIds } },
+      }),
+      client.verifiedIdentityProfile.deleteMany({
+        where: { websiteId: { in: websiteIds } },
+      }),
       client.truleafSessionAccountBanReference.deleteMany({
         where: { websiteId: { in: websiteIds } },
       }),
@@ -210,6 +216,12 @@ export async function deleteUser(userId: string) {
       where: { websiteId: { in: websiteIds } },
     }),
     client.truleafSessionIdentity.deleteMany({
+      where: { websiteId: { in: websiteIds } },
+    }),
+    client.verifiedSessionIdentity.deleteMany({
+      where: { websiteId: { in: websiteIds } },
+    }),
+    client.verifiedIdentityProfile.deleteMany({
       where: { websiteId: { in: websiteIds } },
     }),
     client.truleafSessionAccountBanReference.deleteMany({

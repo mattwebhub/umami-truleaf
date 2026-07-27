@@ -4,6 +4,7 @@ import {
   moderationActionSchema,
   moderationBrowserActionSchema,
   moderationStatusSchema,
+  requestTruleafIdentityProfiles,
   requestTruleafModeration,
 } from './service';
 
@@ -127,6 +128,61 @@ describe('Truleaf service response boundary', () => {
           banned: true,
           canUnban: true,
           sourceMatches: true,
+        },
+      ],
+    });
+  });
+
+  test('accepts only bounded proof-verified profile fields from the resolver', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        Response.json({
+          success: true,
+          data: {
+            profiles: [
+              {
+                websiteId: '11111111-1111-4111-8111-111111111111',
+                sessionId: '22222222-2222-4222-8222-222222222222',
+                distinctId: '507f1f77bcf86cd799439011',
+                displayName: 'Matheus Paranhos',
+                username: 'matheus',
+                avatarUrl: 'https://images.example.test/avatar.png',
+                role: 'user',
+                plan: 'premium',
+                profileVersion: '2026-07-27T12:00:00.000Z',
+                verifiedUntil: '2026-08-27T12:00:00.000Z',
+                email: 'must-not-cross-the-boundary@example.test',
+                proof: 'must-not-cross-the-boundary',
+              },
+            ],
+          },
+        }),
+      ),
+    );
+
+    await expect(
+      requestTruleafIdentityProfiles([
+        {
+          websiteId: '11111111-1111-4111-8111-111111111111',
+          sessionId: '22222222-2222-4222-8222-222222222222',
+          distinctId: '507f1f77bcf86cd799439011',
+          proof: 'signed-proof',
+        },
+      ]),
+    ).resolves.toEqual({
+      profiles: [
+        {
+          websiteId: '11111111-1111-4111-8111-111111111111',
+          sessionId: '22222222-2222-4222-8222-222222222222',
+          distinctId: '507f1f77bcf86cd799439011',
+          displayName: 'Matheus Paranhos',
+          username: 'matheus',
+          avatarUrl: 'https://images.example.test/avatar.png',
+          role: 'user',
+          plan: 'premium',
+          profileVersion: '2026-07-27T12:00:00.000Z',
+          verifiedUntil: '2026-08-27T12:00:00.000Z',
         },
       ],
     });

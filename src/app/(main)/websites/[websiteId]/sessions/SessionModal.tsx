@@ -2,6 +2,7 @@
 import { Column, Dialog, Modal, type ModalProps } from '@umami/react-zen';
 import { SessionProfile } from '@/app/(main)/websites/[websiteId]/sessions/SessionProfile';
 import { useNavigation } from '@/components/hooks';
+import { WebsiteBrandBoundary } from '@/components/website-branding/WebsiteBrandProvider';
 
 export interface SessionModalProps extends ModalProps {
   websiteId: string;
@@ -31,21 +32,23 @@ export function SessionModal({ websiteId, reviewsEnabled = false, ...props }: Se
       isDismissable
       {...props}
     >
-      <Column height="100%" maxWidth="1320px" style={{ margin: '0 auto' }}>
-        <Dialog variant="sheet" className="rounded-lg">
-          {({ close }) => (
-            <Column padding="10">
-              <SessionProfile
-                websiteId={websiteId}
-                sessionId={session}
-                showReplays={!isSharePage}
-                reviewsEnabled={reviewsEnabled && !isSharePage}
-                onClose={() => close()}
-              />
-            </Column>
-          )}
-        </Dialog>
-      </Column>
+      <WebsiteBrandBoundary>
+        <Column height="100%" maxWidth="1320px" style={{ margin: '0 auto' }}>
+          <Dialog variant="sheet" className="rounded-lg">
+            {({ close }) => (
+              <Column padding="10">
+                <SessionProfile
+                  websiteId={websiteId}
+                  sessionId={session}
+                  showReplays={!isSharePage}
+                  reviewsEnabled={reviewsEnabled && !isSharePage}
+                  onClose={() => close()}
+                />
+              </Column>
+            )}
+          </Dialog>
+        </Column>
+      </WebsiteBrandBoundary>
     </Modal>
   );
 }

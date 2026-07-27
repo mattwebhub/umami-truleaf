@@ -1,0 +1,42 @@
+[data-website-brand="truleaf"] {
+  --primary: #386641;
+  --primary-foreground: #ffffff;
+  --surface-raised: #fdf6ed;
+  --surface-sunken: #f5ebe0;
+  --text-primary: #2d2926;
+  --text-muted: #6b5b47;
+  --border-default: #e8d5c4;
+  --border-muted: #f0e3d7;
+  --border-strong: #cfbca9;
+  --interactive-bg: #f5ebe0;
+  --interactive-bg-hover: #eadccb;
+  --interactive-bg-pressed: #dfccb8;
+  --focus-ring: #386641;
+  --focus-ring-offset: #fdf6ed;
+}
+
+[data-theme="dark"] [data-website-brand="truleaf"],
+.dark [data-website-brand="truleaf"] {
+  --primary: #65a474;
+  --primary-foreground: #111811;
+  --surface-base: #182019;
+  --surface-raised: #111712;
+  --surface-sunken: #222d24;
+  --surface-overlay: #182019;
+  --text-primary: #f8f3eb;
+  --text-muted: #c9baa8;
+  --border-default: #435247;
+  --border-muted: #303d33;
+  --border-strong: #596a5e;
+  --interactive-bg: #263229;
+  --interactive-bg-hover: #344337;
+  --interactive-bg-pressed: #435447;
+  --focus-ring: #8bc397;
+  --focus-ring-offset: #182019;
+}
+
+[data-website-brand="truleaf"] h1,
+[data-website-brand="truleaf"] h2 {
+  font-family: var(--font-truleaf-display), Georgia, serif;
+  letter-spacing: -0.015em;
+}

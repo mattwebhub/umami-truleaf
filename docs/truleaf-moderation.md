@@ -11,6 +11,7 @@ All features are disabled unless explicitly enabled and allowlisted.
 ```dotenv
 TRULEAF_MODERATION_ENABLED=false
 TRULEAF_NETWORK_CAPTURE_ENABLED=false
+TRULEAF_IDENTITY_PROFILE_ENABLED=false
 TRULEAF_WEBSITE_IDS=00000000-0000-0000-0000-000000000000
 # Explicit Umami user UUIDs allowed to operate moderation. Website update
 # permission is still required; an empty allowlist denies every operator.
@@ -30,6 +31,14 @@ TRULEAF_RETENTION_SECRET=<independent-random-32+-character-secret>
 # Required when network capture is enabled in production. The ingress must
 # overwrite this header and prevent direct access to /api/send.
 CLIENT_IP_HEADER=x-real-ip
+
+# Reviewed, compiled profiles are selected by exact website UUID. Unknown
+# profiles and malformed configuration fail closed to standard Umami.
+WEBSITE_BRANDING_CONFIG={"websites":[{"websiteId":"00000000-0000-0000-0000-000000000000","profile":"truleaf"}]}
+
+# Exact hosts or controlled wildcard subdomains used by the authenticated,
+# server-side avatar proxy.
+IDENTITY_AVATAR_ALLOWED_HOSTS=lh3.googleusercontent.com
 ```
 
 Encryption and blind-index keys must be independently generated. Do not reuse
@@ -44,6 +53,13 @@ Encryption and blind-index keys must be independently generated. Do not reuse
 - `distinctId` is only a display candidate because a browser can forge it.
   Account actions require a `truleafIdentityProof` minted by the authenticated
   Truleaf backend; Truleaf verifies the proof again before acting.
+- A verified account profile is resolved server-to-server only after that same
+  proof is accepted by Truleaf. Browser-supplied name, username, role, plan, or
+  avatar properties are never treated as authoritative.
+- Identity profile enrichment is restricted by both
+  `TRULEAF_IDENTITY_PROFILE_ENABLED` and the exact `TRULEAF_WEBSITE_IDS`
+  allowlist. Anonymous sessions have no verified profile row and retain their
+  ordinary anonymous presentation.
 - `truleafIdentityProof` is a reserved collector property. The fork strips it
   before generic `session_data` and `event_data` persistence (including custom
   events) and stores an encrypted copy in `truleaf_session_identity` only for
@@ -63,6 +79,51 @@ Encryption and blind-index keys must be independently generated. Do not reuse
   be explicitly listed in `TRULEAF_MODERATION_OPERATOR_IDS` and the operator
   must also have update access to the website. An administrator is not exempt
   from the explicit operator allowlist.
+- Avatar URLs are not returned to the browser. Operators fetch them through an
+  authenticated, website-authorized proxy that requires HTTPS, rejects
+  redirects, permits only configured hosts and image content types, enforces a
+  five-second timeout, and reads at most 2 MiB.
+
+## Verified identity profiles
+
+On an authenticated Truleaf identify event, Umami stores the encrypted identity
+proof first and asynchronously asks the Truleaf backend to resolve the current
+account profile. Resolution is fail-open for analytics collection: a backend
+timeout or invalid profile cannot drop the original event. Valid unresolved
+proofs are selected through an anti-join and retried by the authenticated
+maintenance endpoint in batches of 100. Failed or poison records use bounded
+exponential backoff and are parked after eight attempts until a fresh identify
+resets their retry state. Resolver responses are correlated to the exact
+requested website/session/distinct-ID tuples before storage. A successful
+response is validated and stored in two product-neutral tables:
+
+- `verified_identity_profile` holds the latest authoritative display profile
+  keyed by website and distinct ID.
+- `verified_session_identity` links a website session to that verified profile.
+
+Profile updates are monotonic by ISO `profileVersion`, and serializable
+transactions with bounded conflict retries prevent delayed concurrent proofs
+from overwriting newer presentation data or shortening freshness. Session list
+enrichment is bounded to the current page and uses two batched queries rather
+than one query per row.
+The Sessions list and session detail show the verified display name, username,
+role, plan, and proxied avatar. No email address is stored or displayed.
+
+Website reset/deletion and owner deletion remove both verified tables. Expired
+profiles are hidden immediately and deleted by the maintenance job; their
+session links cascade. Disabling the profile flag stops new resolution and
+removes profile enrichment from API responses without affecting anonymous
+analytics.
+
+## Website-scoped branding
+
+`WEBSITE_BRANDING_CONFIG` maps exact website UUIDs to reviewed profiles compiled
+into the fork. The `truleaf` profile changes the authenticated website shell,
+logo, title, favicon, display typography, and light/dark design tokens only
+while that website is active. Navigating to another website restores standard
+Umami branding; other tenants and share views do not inherit it. The map is
+limited to 100 entries and malformed JSON, unknown profiles, or unlisted UUIDs
+fail closed to the normal Umami interface.
 
 ## Storage and retention
 
@@ -143,11 +204,13 @@ attestations, which the image workflow verifies before it succeeds.
 
 1. Deploy Truleaf proof issuance, moderation API, and enforcement with its
    Umami credential configured.
-2. Deploy this image with both feature flags disabled. Proof stripping is
+2. Deploy this image with moderation, capture, and identity-profile flags
+   disabled. Proof stripping is
    unconditional, so this stops new legacy generic rows before cleanup. For a
    ClickHouse deployment, wait at least five minutes after every old collector
    is gone; migration 14 aborts if it observes a newer proof row.
-3. Back up Umami PostgreSQL and run migrations 21–23. Migrations 22 and 23
+3. Back up Umami PostgreSQL and run migrations 21–23 and 27. Migration 27 adds
+   the verified profile and session-link tables. Migrations 22 and 23
    delete legacy `truleafIdentityProof` rows from generic session and event data
    rather than trusting and copying browser-provided assertions. ClickHouse
    deployments must also apply migrations 13 and 14. Migration 14 removes the
@@ -175,6 +238,7 @@ deployment uses PostgreSQL only, so the ClickHouse migrations are not applied
 to today's Truleaf production database; this coverage keeps the fork valid for
 Umami's supported ClickHouse topology.
 
-To roll back, disable both flags, revoke the service credential, and deploy the
-pinned upstream image. The additive tables are ignored by upstream and can
-remain until the retention job or an explicitly reviewed cleanup removes them.
+To roll back, disable moderation, capture, and identity-profile flags, revoke
+the service credential, and deploy the pinned upstream image. The additive
+tables are ignored by upstream and can remain until the retention job or an
+explicitly reviewed cleanup removes them.

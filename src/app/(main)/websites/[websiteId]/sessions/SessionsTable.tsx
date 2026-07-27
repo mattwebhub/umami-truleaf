@@ -1,4 +1,4 @@
-import { DataColumn, DataTable, type DataTableProps } from '@umami/react-zen';
+import { Column, DataColumn, DataTable, type DataTableProps, Row, Text } from '@umami/react-zen';
 import { Avatar } from '@/components/common/Avatar';
 import { DateDistance } from '@/components/common/DateDistance';
 import Link from '@/components/common/Link';
@@ -8,21 +8,47 @@ import { useFormat, useMessages } from '@/components/hooks';
 export function SessionsTable({
   websiteId,
   getSessionHref,
+  showIdentity = false,
   ...props
-}: DataTableProps & { websiteId: string; getSessionHref?: (row: any) => string }) {
+}: DataTableProps & {
+  websiteId: string;
+  getSessionHref?: (row: any) => string;
+  showIdentity?: boolean;
+}) {
   const { t, labels } = useMessages();
   const { formatValue } = useFormat();
 
   return (
     <DataTable {...props}>
-      <DataColumn id="id" label={t(labels.session)} width="100px">
+      <DataColumn id="id" label={t(labels.session)} width={showIdentity ? '240px' : '100px'}>
         {(row: any) => (
           <Link
             href={
               getSessionHref ? getSessionHref(row) : `/websites/${websiteId}/sessions/${row.id}`
             }
           >
-            <Avatar seed={row.id} size={32} />
+            {showIdentity ? (
+              <Row alignItems="center" gap="3">
+                <Avatar
+                  seed={row.id}
+                  size={32}
+                  src={
+                    row.identityProfile?.hasAvatar
+                      ? `/api/websites/${websiteId}/sessions/${row.id}/identity-avatar`
+                      : undefined
+                  }
+                  alt={row.identityProfile?.displayName ?? t(labels.unknown)}
+                />
+                <Column>
+                  <Text weight="bold">{row.identityProfile?.displayName ?? t(labels.unknown)}</Text>
+                  {row.identityProfile?.username && (
+                    <Text color="muted">@{row.identityProfile.username}</Text>
+                  )}
+                </Column>
+              </Row>
+            ) : (
+              <Avatar seed={row.id} size={32} />
+            )}
           </Link>
         )}
       </DataColumn>

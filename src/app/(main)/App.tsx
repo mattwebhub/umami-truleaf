@@ -6,6 +6,11 @@ import { MobileNav } from '@/app/(main)/MobileNav';
 import { SideNav } from '@/app/(main)/SideNav';
 import { TopNav } from '@/app/(main)/TopNav';
 import { useConfig, useLoginQuery, useNavigation, useTeamQuery } from '@/components/hooks';
+import { useWebsiteQuery } from '@/components/hooks/queries/useWebsiteQuery';
+import {
+  WebsiteBrandBoundary,
+  WebsiteBrandProvider,
+} from '@/components/website-branding/WebsiteBrandProvider';
 import { LAST_TEAM_CONFIG } from '@/lib/constants';
 import { removeItem, setItem } from '@/lib/storage';
 import { UpdateNotice } from './UpdateNotice';
@@ -13,8 +18,12 @@ import { UpdateNotice } from './UpdateNotice';
 export function App({ children }) {
   const { user, isLoading, error } = useLoginQuery();
   const config = useConfig();
-  const { pathname, router, teamId } = useNavigation();
+  const { pathname, router, teamId, websiteId } = useNavigation();
   const { isLoading: isTeamLoading, error: teamError } = useTeamQuery(teamId);
+  const { data: activeWebsite, isLoading: isWebsiteLoading } = useWebsiteQuery(websiteId, {
+    placeholderData: undefined,
+  });
+  const websiteBrand = activeWebsite?.websiteBrand ?? null;
 
   useEffect(() => {
     if (teamId) {
@@ -31,7 +40,7 @@ export function App({ children }) {
     }
   }, [teamId, teamError, router]);
 
-  if (isLoading || !config || (teamId && isTeamLoading)) {
+  if (isLoading || !config || (teamId && isTeamLoading) || (websiteId && isWebsiteLoading)) {
     return <Loading placement="absolute" />;
   }
 
@@ -51,42 +60,50 @@ export function App({ children }) {
   }
 
   return (
-    <Grid
-      columns={{ base: '1fr', lg: 'auto 1fr' }}
-      rows={{ base: 'auto 1fr', lg: '1fr' }}
-      height="screen"
-    >
-      <Row display={{ base: 'flex', lg: 'none' }} alignItems="center" gap padding="3">
-        <MobileNav />
-      </Row>
-      <Column display={{ base: 'none', lg: 'flex' }} minHeight="0" style={{ overflow: 'hidden' }}>
-        <SideNav />
-      </Column>
-      <Column overflowX="hidden" minHeight="0" position="relative">
-        <TopNav />
-        <Column alignItems="center">{children}</Column>
-      </Column>
-      <UpdateNotice user={user} config={config} />
-      {process.env.NODE_ENV === 'production' && !pathname.includes('/share/') && (
-        <Script src={`${process.env.basePath || ''}/telemetry.js`} />
-      )}
-      {process.env.selfTrack && (
-        <Script
-          async
-          data-website-id={process.env.selfTrack}
-          src={`${process.env.basePath || ''}/script.js`}
-          data-cache="true"
-          data-performance="true"
-        />
-      )}
-      {process.env.selfRecord && (
-        <Script
-          async
-          data-website-id={process.env.selfRecord}
-          data-sample-rate="1"
-          src={`${process.env.basePath || ''}/recorder.js`}
-        />
-      )}
-    </Grid>
+    <WebsiteBrandProvider brand={websiteBrand}>
+      <WebsiteBrandBoundary>
+        <Grid
+          columns={{ base: '1fr', lg: 'auto 1fr' }}
+          rows={{ base: 'auto 1fr', lg: '1fr' }}
+          height="screen"
+        >
+          <Row display={{ base: 'flex', lg: 'none' }} alignItems="center" gap padding="3">
+            <MobileNav />
+          </Row>
+          <Column
+            display={{ base: 'none', lg: 'flex' }}
+            minHeight="0"
+            style={{ overflow: 'hidden' }}
+          >
+            <SideNav />
+          </Column>
+          <Column overflowX="hidden" minHeight="0" position="relative">
+            <TopNav />
+            <Column alignItems="center">{children}</Column>
+          </Column>
+          <UpdateNotice user={user} config={config} />
+          {process.env.NODE_ENV === 'production' && !pathname.includes('/share/') && (
+            <Script src={`${process.env.basePath || ''}/telemetry.js`} />
+          )}
+          {process.env.selfTrack && (
+            <Script
+              async
+              data-website-id={process.env.selfTrack}
+              src={`${process.env.basePath || ''}/script.js`}
+              data-cache="true"
+              data-performance="true"
+            />
+          )}
+          {process.env.selfRecord && (
+            <Script
+              async
+              data-website-id={process.env.selfRecord}
+              data-sample-rate="1"
+              src={`${process.env.basePath || ''}/recorder.js`}
+            />
+          )}
+        </Grid>
+      </WebsiteBrandBoundary>
+    </WebsiteBrandProvider>
   );
 }

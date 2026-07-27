@@ -67,6 +67,10 @@ function decodeClaims(proof: string): IdentityProofClaims | undefined {
   }
 }
 
+export function getIdentityProofSubject(proof: string) {
+  return decodeClaims(proof)?.sub;
+}
+
 export function partitionTruleafIdentityProof(data: Record<string, unknown>): {
   sessionData: DynamicData;
   proof?: string;

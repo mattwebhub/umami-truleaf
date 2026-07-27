@@ -12,11 +12,9 @@ export function SessionInfo({ data }) {
   const { getRegionName } = useRegionNames(locale);
 
   return (
-    <Grid columns="repeat(auto-fit, minmax(200px, 1fr)" gap>
+    <Grid columns="repeat(auto-fit, minmax(200px, 1fr))" gap>
       <Info label={t(labels.distinctId)} icon={<KeyRound />}>
-        <span style={{ overflowWrap: 'anywhere' }}>
-          {data?.distinctId}
-        </span>
+        <span style={{ overflowWrap: 'anywhere' }}>{data?.distinctId}</span>
       </Info>
 
       <Info label={t(labels.lastSeen)} icon={<Calendar />}>

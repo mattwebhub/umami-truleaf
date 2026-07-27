@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import {
+  deferTruleafIdentityProfileRetry,
   deleteExpiredTruleafSessionIdentities,
+  getPendingTruleafSessionIdentities,
   getTruleafSessionIdentityProof,
   recordTruleafSessionIdentityProof,
 } from './truleafSessionIdentity';
@@ -8,15 +10,19 @@ import {
 const mocks = vi.hoisted(() => ({
   deleteMany: vi.fn(),
   findUnique: vi.fn(),
+  queryRawUnsafe: vi.fn(),
+  updateMany: vi.fn(),
   upsert: vi.fn(),
 }));
 
 vi.mock('@/lib/prisma', () => ({
   default: {
     client: {
+      $queryRawUnsafe: mocks.queryRawUnsafe,
       truleafSessionIdentity: {
         deleteMany: mocks.deleteMany,
         findUnique: mocks.findUnique,
+        updateMany: mocks.updateMany,
         upsert: mocks.upsert,
       },
     },
@@ -41,6 +47,8 @@ beforeEach(() => {
   process.env.TRULEAF_NETWORK_ENCRYPTION_KEYS = `v1:${Buffer.alloc(32, 8).toString('base64')}`;
   mocks.upsert.mockResolvedValue({ id: 'identity-1' });
   mocks.deleteMany.mockResolvedValue({ count: 0 });
+  mocks.queryRawUnsafe.mockResolvedValue([]);
+  mocks.updateMany.mockResolvedValue({ count: 1 });
 });
 
 afterEach(() => {
@@ -92,4 +100,36 @@ test('deletes identity records at their proof expiry', async () => {
   expect(mocks.deleteMany).toHaveBeenCalledWith({
     where: { expiresAt: { lte: now } },
   });
+});
+
+test('selects pending retries with an anti-join before applying the batch limit', async () => {
+  const now = new Date('2026-07-26T12:00:00Z');
+
+  await getPendingTruleafSessionIdentities(now, 500);
+
+  expect(mocks.queryRawUnsafe).toHaveBeenCalledWith(
+    expect.stringContaining('left join verified_identity_profile'),
+    now,
+    100,
+  );
+  expect(mocks.queryRawUnsafe.mock.calls[0][0]).toContain('profile.identity_profile_id is null');
+});
+
+test('backs poison proofs off and eventually parks them until proof expiry', async () => {
+  const now = new Date('2026-07-26T12:00:00Z');
+  const expiresAt = new Date('2026-08-26T12:00:00Z');
+
+  await deferTruleafIdentityProfileRetry(
+    { websiteId, sessionId, expiresAt, profileAttemptCount: 7 },
+    now,
+  );
+
+  expect(mocks.updateMany).toHaveBeenCalledWith(
+    expect.objectContaining({
+      data: expect.objectContaining({
+        profileAttemptCount: { increment: 1 },
+        profileRetryAt: expiresAt,
+      }),
+    }),
+  );
 });

@@ -21,6 +21,10 @@ export function isTruleafNetworkCaptureEnabled() {
   return enabled(process.env.TRULEAF_NETWORK_CAPTURE_ENABLED);
 }
 
+export function isTruleafIdentityProfileEnabled() {
+  return enabled(process.env.TRULEAF_IDENTITY_PROFILE_ENABLED);
+}
+
 export function isTruleafWebsite(websiteId: string) {
   return csv(process.env.TRULEAF_WEBSITE_IDS).has(websiteId);
 }

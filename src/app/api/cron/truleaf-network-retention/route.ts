@@ -1,9 +1,11 @@
 import crypto from 'node:crypto';
 import { json, unauthorized } from '@/lib/response';
+import { reconcileVerifiedIdentityProfiles } from '@/lib/truleaf/identity-profile-reconciler';
 import {
   deleteExpiredTruleafSessionAccountBanReferences,
   deleteExpiredTruleafSessionIdentities,
   deleteExpiredTruleafSessionNetworks,
+  deleteExpiredVerifiedIdentityProfiles,
 } from '@/queries/prisma';
 
 function hasValidSecret(request: Request) {
@@ -28,16 +30,22 @@ export async function POST(request: Request) {
     return unauthorized();
   }
 
-  const [networks, identities, accountBanReferences] = await Promise.all([
+  const reconciliation = await reconcileVerifiedIdentityProfiles();
+  const [networks, identities, accountBanReferences, identityProfiles] = await Promise.all([
     deleteExpiredTruleafSessionNetworks(),
     deleteExpiredTruleafSessionIdentities(),
     deleteExpiredTruleafSessionAccountBanReferences(),
+    deleteExpiredVerifiedIdentityProfiles(),
   ]);
 
   return json({
-    deleted: networks.count + identities.count + accountBanReferences.count,
+    deleted:
+      networks.count + identities.count + accountBanReferences.count + identityProfiles.count,
     deletedNetworks: networks.count,
     deletedIdentityProofs: identities.count,
     deletedAccountBanReferences: accountBanReferences.count,
+    deletedIdentityProfiles: identityProfiles.count,
+    reconciledIdentityProfiles: reconciliation.resolved,
+    attemptedIdentityProfiles: reconciliation.attempted,
   });
 }

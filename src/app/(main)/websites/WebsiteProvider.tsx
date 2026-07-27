@@ -3,10 +3,12 @@ import { Loading } from '@umami/react-zen';
 import { createContext, type ReactNode } from 'react';
 import { useWebsiteQuery } from '@/components/hooks/queries/useWebsiteQuery';
 import type { Website } from '@/generated/prisma/client';
+import type { WebsiteBrandId } from '@/lib/website-branding/config';
 
 export type WebsiteContextValue = Website & {
   canUpdate: boolean;
   productCockpitEnabled: boolean;
+  websiteBrand: WebsiteBrandId | null;
 };
 
 export const WebsiteContext = createContext<WebsiteContextValue>(null);

@@ -8,6 +8,7 @@ import {
   TabList,
   TabPanel,
   Tabs,
+  Text,
   TextField,
 } from '@umami/react-zen';
 import { X } from 'lucide-react';
@@ -50,7 +51,7 @@ export function SessionProfile({
         <Column gap>
           {onClose && (
             <Row justifyContent="flex-end">
-              <Button onPress={onClose} variant="quiet">
+              <Button onPress={onClose} variant="quiet" aria-label="Close session">
                 <Icon>
                   <X />
                 </Icon>
@@ -58,10 +59,28 @@ export function SessionProfile({
             </Row>
           )}
           <Column gap="6">
-            <Row justifyContent="center" alignItems="center" gap="6">
-              <Avatar seed={data?.id} size={128} />
-              <Column width="360px">
-                <TextField label="ID" value={data?.id} allowCopy />
+            <Row justifyContent="center" alignItems="center" gap="6" wrap="wrap">
+              <Avatar
+                seed={data?.id}
+                size={128}
+                src={
+                  data.identityProfile?.hasAvatar
+                    ? `/api/websites/${websiteId}/sessions/${sessionId}/identity-avatar`
+                    : undefined
+                }
+                alt={data.identityProfile?.displayName ?? t(labels.unknown)}
+              />
+              <Column gap="2" width="100%" maxWidth="420px">
+                <Text size="xl" weight="bold">
+                  {data.identityProfile?.displayName ?? t(labels.unknown)}
+                </Text>
+                {data.identityProfile && (
+                  <Text color="muted">
+                    @{data.identityProfile.username} · {data.identityProfile.role} ·{' '}
+                    {data.identityProfile.plan}
+                  </Text>
+                )}
+                <TextField label={t(labels.session)} value={data?.id} allowCopy />
               </Column>
             </Row>
             <SessionStats data={data} />

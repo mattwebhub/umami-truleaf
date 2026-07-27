@@ -3,13 +3,40 @@ import type { ReactNode } from 'react';
 import { DateDistance } from '@/components/common/DateDistance';
 import { TypeIcon } from '@/components/common/TypeIcon';
 import { useFormat, useLocale, useMessages, useRegionNames } from '@/components/hooks';
-import { Calendar, KeyRound, Landmark, MapPin } from '@/components/icons';
+import { Calendar, KeyRound, Landmark, MapPin, Server, ShieldCheck } from '@/components/icons';
+import { isServerSession, SERVER_SESSION_DESCRIPTION, SERVER_SESSION_NAME } from './ServerSession';
 
 export function SessionInfo({ data }) {
   const { locale } = useLocale();
   const { t, labels } = useMessages();
   const { formatValue } = useFormat();
   const { getRegionName } = useRegionNames(locale);
+
+  if (isServerSession(data)) {
+    return (
+      <Grid columns="repeat(auto-fit, minmax(200px, 1fr))" gap>
+        <Info label={t(labels.distinctId)} icon={<KeyRound />}>
+          <span style={{ overflowWrap: 'anywhere' }}>{data?.distinctId}</span>
+        </Info>
+
+        <Info label={t(labels.lastSeen)} icon={<Calendar />}>
+          <DateDistance date={new Date(data.lastAt)} />
+        </Info>
+
+        <Info label={t(labels.firstSeen)} icon={<Calendar />}>
+          <DateDistance date={new Date(data.firstAt)} />
+        </Info>
+
+        <Info label={t(labels.source)} icon={<Server />}>
+          {SERVER_SESSION_NAME}
+        </Info>
+
+        <Info label="Provenance" icon={<ShieldCheck />}>
+          {SERVER_SESSION_DESCRIPTION} · Trusted API
+        </Info>
+      </Grid>
+    );
+  }
 
   return (
     <Grid columns="repeat(auto-fit, minmax(200px, 1fr))" gap>

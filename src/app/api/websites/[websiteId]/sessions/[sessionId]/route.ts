@@ -1,5 +1,6 @@
 import { parseRequest } from '@/lib/request';
 import { json, unauthorized } from '@/lib/response';
+import { isTrustedServerSession } from '@/lib/server-events';
 import { isTruleafIdentityProfileEnabled, isTruleafWebsite } from '@/lib/truleaf/config';
 import { canViewAuthenticatedWebsite, canViewWebsiteSection } from '@/permissions';
 import { getVerifiedSessionIdentityProfiles } from '@/queries/prisma';
@@ -24,14 +25,35 @@ export async function GET(
   }
 
   const data = await getWebsiteSession(websiteId, sessionId);
+  const canViewPrivateIdentity = Boolean(
+    data && auth?.user && (await canViewAuthenticatedWebsite(auth, websiteId)),
+  );
   const profiles =
     data &&
-    auth?.user &&
+    canViewPrivateIdentity &&
     isTruleafIdentityProfileEnabled() &&
-    isTruleafWebsite(websiteId) &&
-    (await canViewAuthenticatedWebsite(auth, websiteId))
+    isTruleafWebsite(websiteId)
       ? await getVerifiedSessionIdentityProfiles(websiteId, [sessionId])
       : new Map();
 
-  return json(data ? { ...data, identityProfile: profiles.get(sessionId) } : data);
+  const serverSession =
+    data &&
+    isTrustedServerSession({
+      websiteId,
+      sessionId,
+      distinctId: data.distinctId,
+    });
+
+  const { distinctId, ...visibleData } = data ?? {};
+
+  return json(
+    data
+      ? {
+          ...visibleData,
+          ...(canViewPrivateIdentity ? { distinctId } : {}),
+          ...(serverSession ? { serverSession: true } : {}),
+          identityProfile: profiles.get(sessionId),
+        }
+      : data,
+  );
 }

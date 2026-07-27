@@ -2,6 +2,9 @@ import { beforeEach, expect, test, vi } from 'vitest';
 import { fetchWebsite } from '@/lib/load';
 import prisma from '@/lib/prisma';
 import { createServerEventSignature } from '@/lib/server-events';
+import { scheduleTruleafIdentityProofStorage } from '@/lib/truleaf/identity-proof';
+import { requestTruleafIdentityProfiles } from '@/lib/truleaf/service';
+import { recordTruleafSessionIdentityProof, recordVerifiedSessionIdentity } from '@/queries/prisma';
 import { createSession, saveEvent } from '@/queries/sql';
 import { POST } from './route';
 
@@ -10,6 +13,23 @@ vi.mock('@/lib/crypto', () => ({
 }));
 vi.mock('@/lib/load', () => ({
   fetchWebsite: vi.fn(async () => ({ id: 'website' })),
+}));
+vi.mock('@/lib/truleaf/config', () => ({
+  isTruleafIdentityProfileEnabled: () => true,
+  isTruleafModerationEnabled: () => true,
+  isTruleafWebsite: () => true,
+}));
+vi.mock('@/lib/truleaf/identity-proof', () => ({
+  scheduleTruleafIdentityProofStorage: vi.fn((task: () => Promise<unknown>) =>
+    task().catch(() => undefined),
+  ),
+}));
+vi.mock('@/lib/truleaf/service', () => ({
+  requestTruleafIdentityProfiles: vi.fn(),
+}));
+vi.mock('@/queries/prisma', () => ({
+  recordTruleafSessionIdentityProof: vi.fn(async () => ({})),
+  recordVerifiedSessionIdentity: vi.fn(),
 }));
 vi.mock('@/queries/sql', () => ({
   createSession: vi.fn(),
@@ -40,13 +60,13 @@ const body = JSON.stringify({
   data: { plan: 'professional', revenue: 9.99, currency: 'USD' },
 });
 
-function createRequest(overrides: Record<string, string> = {}) {
+function createRequest(overrides: Record<string, string> = {}, rawBody = body) {
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const signature = createServerEventSignature({
     secret,
     timestamp,
     idempotencyKey,
-    rawBody: body,
+    rawBody,
   });
 
   return new Request('http://localhost/api/server-events', {
@@ -59,7 +79,7 @@ function createRequest(overrides: Record<string, string> = {}) {
       'x-umami-signature': signature,
       ...overrides,
     },
-    body,
+    body: rawBody,
   });
 }
 
@@ -96,7 +116,7 @@ test('accepts a signed, website-scoped fact with a deterministic event ID', asyn
   expect(fetchWebsite).toHaveBeenCalledWith(websiteId);
   expect(createSession).toHaveBeenCalledWith(
     expect.objectContaining({
-      id: `uuid:${websiteId}:account-1`,
+      id: `uuid:${websiteId}:server:account-1`,
       distinctId: 'account-1',
     }),
   );
@@ -115,6 +135,99 @@ test('accepts a signed, website-scoped fact with a deterministic event ID', asyn
       }),
     }),
   );
+});
+
+test('resolves a signed server event to its authoritative account profile', async () => {
+  const identityProof = 'header.payload.signature';
+  const rawBody = JSON.stringify({
+    websiteId,
+    name: 'server.subscription-verified',
+    distinctId: 'account-1',
+    identityProof,
+    occurredAt: '2026-07-27T00:00:00.000Z',
+    urlPath: '/server/subscription',
+  });
+  vi.mocked(requestTruleafIdentityProfiles).mockResolvedValueOnce({
+    profiles: [
+      {
+        websiteId,
+        sessionId: `uuid:${websiteId}:server:account-1`,
+        distinctId: 'account-1',
+        displayName: 'Matheus Paranhos',
+        username: 'matheus',
+        role: 'user',
+        plan: 'premium',
+        profileVersion: '2026-07-27T12:00:00.000Z',
+        verifiedUntil: '2026-08-27T12:00:00.000Z',
+      },
+    ],
+  });
+
+  const response = await POST(createRequest({}, rawBody));
+
+  expect(response.status).toBe(200);
+  expect(scheduleTruleafIdentityProofStorage).toHaveBeenCalledOnce();
+  expect(recordTruleafSessionIdentityProof).toHaveBeenCalledWith(
+    websiteId,
+    `uuid:${websiteId}:server:account-1`,
+    'account-1',
+    identityProof,
+  );
+  expect(recordVerifiedSessionIdentity).toHaveBeenCalledWith(
+    expect.objectContaining({
+      websiteId,
+      sessionId: `uuid:${websiteId}:server:account-1`,
+      distinctId: 'account-1',
+    }),
+  );
+});
+
+test('keeps the sender retryable until the signed identity proof is durable', async () => {
+  const identityProof = 'header.payload.signature';
+  const rawBody = JSON.stringify({
+    websiteId,
+    name: 'server.subscription-verified',
+    distinctId: 'account-1',
+    identityProof,
+    occurredAt: '2026-07-27T00:00:00.000Z',
+    urlPath: '/server/subscription',
+  });
+  vi.mocked(recordTruleafSessionIdentityProof).mockRejectedValueOnce(
+    new Error('identity store unavailable'),
+  );
+
+  const response = await POST(createRequest({}, rawBody));
+
+  expect(response.status).toBe(202);
+  await expect(response.json()).resolves.toEqual({
+    ok: true,
+    duplicate: false,
+    projected: false,
+    identityStored: false,
+  });
+  expect(saveEvent).not.toHaveBeenCalled();
+  expect(prisma.client.serverEventFact.update).not.toHaveBeenCalled();
+});
+
+test('acknowledges a durable proof when asynchronous profile resolution is unavailable', async () => {
+  const identityProof = 'header.payload.signature';
+  const rawBody = JSON.stringify({
+    websiteId,
+    name: 'server.subscription-verified',
+    distinctId: 'account-1',
+    identityProof,
+    occurredAt: '2026-07-27T00:00:00.000Z',
+    urlPath: '/server/subscription',
+  });
+  vi.mocked(requestTruleafIdentityProfiles).mockRejectedValueOnce(
+    new Error('resolver unavailable'),
+  );
+
+  const response = await POST(createRequest({}, rawBody));
+
+  expect(response.status).toBe(200);
+  expect(recordTruleafSessionIdentityProof).toHaveBeenCalledOnce();
+  expect(saveEvent).toHaveBeenCalledOnce();
 });
 
 test('returns an idempotent success for an existing deterministic event', async () => {

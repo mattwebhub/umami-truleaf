@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import { uuid } from './crypto';
 import {
   createServerEventSignature,
   getServerEventKey,
   isServerEventName,
+  isTrustedServerSession,
   verifyServerEventSignature,
 } from './server-events';
 
@@ -17,6 +19,25 @@ describe('server event authentication', () => {
   test('reserves a configuration-independent trusted namespace', () => {
     expect(isServerEventName('server.account-created')).toBe(true);
     expect(isServerEventName('account-created')).toBe(false);
+  });
+
+  test('derives provenance from the trusted session namespace, not spoofable dimensions', () => {
+    const distinctId = '507f1f77bcf86cd799439011';
+
+    expect(
+      isTrustedServerSession({
+        websiteId,
+        sessionId: uuid(websiteId, 'server', distinctId),
+        distinctId,
+      }),
+    ).toBe(true);
+    expect(
+      isTrustedServerSession({
+        websiteId,
+        sessionId: uuid(websiteId, distinctId),
+        distinctId,
+      }),
+    ).toBe(false);
   });
 
   test('loads a scoped 32-byte key', () => {

@@ -15,6 +15,12 @@ import { X } from 'lucide-react';
 import { Avatar } from '@/components/common/Avatar';
 import { LoadingPanel } from '@/components/common/LoadingPanel';
 import { useMessages, useWebsiteSessionQuery } from '@/components/hooks';
+import {
+  isServerSession,
+  SERVER_SESSION_DESCRIPTION,
+  SERVER_SESSION_NAME,
+  ServerSessionAvatar,
+} from './ServerSession';
 import { SessionActivity } from './SessionActivity';
 import { SessionData } from './SessionData';
 import { SessionInfo } from './SessionInfo';
@@ -60,25 +66,33 @@ export function SessionProfile({
           )}
           <Column gap="6">
             <Row justifyContent="center" alignItems="center" gap="6" wrap="wrap">
-              <Avatar
-                seed={data?.id}
-                size={128}
-                src={
-                  data.identityProfile?.hasAvatar
-                    ? `/api/websites/${websiteId}/sessions/${sessionId}/identity-avatar`
-                    : undefined
-                }
-                alt={data.identityProfile?.displayName ?? t(labels.unknown)}
-              />
+              {isServerSession(data) && !data.identityProfile ? (
+                <ServerSessionAvatar size={128} />
+              ) : (
+                <Avatar
+                  seed={data?.id}
+                  size={128}
+                  src={
+                    data.identityProfile?.hasAvatar
+                      ? `/api/websites/${websiteId}/sessions/${sessionId}/identity-avatar`
+                      : undefined
+                  }
+                  alt={data.identityProfile?.displayName ?? t(labels.unknown)}
+                />
+              )}
               <Column gap="2" width="100%" maxWidth="420px">
                 <Text size="xl" weight="bold">
-                  {data.identityProfile?.displayName ?? t(labels.unknown)}
+                  {data.identityProfile?.displayName ??
+                    (isServerSession(data) ? SERVER_SESSION_NAME : t(labels.unknown))}
                 </Text>
                 {data.identityProfile && (
                   <Text color="muted">
                     @{data.identityProfile.username} · {data.identityProfile.role} ·{' '}
                     {data.identityProfile.plan}
                   </Text>
+                )}
+                {isServerSession(data) && !data.identityProfile && (
+                  <Text color="muted">{SERVER_SESSION_DESCRIPTION} · Trusted API</Text>
                 )}
                 <TextField label={t(labels.session)} value={data?.id} allowCopy />
               </Column>

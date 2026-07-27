@@ -109,6 +109,58 @@ than one query per row.
 The Sessions list and session detail show the verified display name, username,
 role, plan, and proxied avatar. No email address is stored or displayed.
 
+Trusted `server.*` product facts use the same account bridge. Truleaf attaches
+a fresh identity proof only while delivering the signed event; the proof is not
+stored in its outbox or event data. Umami binds the stable server session to the
+verified account after exact tuple correlation. Server sessions use a dedicated
+`website/server/account` identity namespace so their facts never overwrite or
+inherit browser geography and device metadata. Until profile resolution
+succeeds, the UI labels the row as a Truleaf backend event instead of rendering
+a fake anonymous visitor, geography, browser, or operating system.
+
+Facts written before the dedicated namespace can be inspected and moved
+without guessing from client-controlled dimensions. From a source checkout,
+the script defaults to a dry run:
+
+```bash
+# Safe default: report affected trusted facts without changing data.
+pnpm backfill-truleaf-server-sessions
+
+# PostgreSQL only. Apply after reviewing the dry-run counts.
+pnpm backfill-truleaf-server-sessions --apply
+```
+
+The backfill is idempotent. It moves events by their trusted ledger IDs, links
+an active verified profile to the new server session, and clears misleading
+`server` device metadata from a legacy browser session when browser activity
+remains. Database writes are bounded to 250 event IDs per statement. It refuses
+to run when ClickHouse event storage is enabled.
+
+The production image intentionally contains neither TypeScript source nor the
+`tsx` development dependency. Run the compiled, authenticated API inside the
+deployed pod instead:
+
+```bash
+# Inspect counts. This is the production-safe default.
+kubectl exec deployment/umami -n truleaf -- sh -c \
+  'curl --fail-with-body --silent --show-error --request POST \
+  --header "Authorization: Bearer $TRULEAF_RETENTION_SECRET" \
+  http://127.0.0.1:3000/api/cron/truleaf-server-session-backfill'
+
+# Apply only after the dry-run result is reviewed.
+kubectl exec deployment/umami -n truleaf -- sh -c \
+  'curl --fail-with-body --silent --show-error --request POST \
+  --header "Authorization: Bearer $TRULEAF_RETENTION_SECRET" \
+  "http://127.0.0.1:3000/api/cron/truleaf-server-session-backfill?apply=true"'
+```
+
+Deploy the new namespaced writer before applying the backfill so no old-format
+events can arrive during the move. Then repeat the dry run after apply and
+require `eventsFound: 0` before considering the migration complete. For a large
+ledger, run this during a quiet window and monitor PostgreSQL while it scans the
+trusted fact identities; each identity is migrated in its own serializable
+transaction.
+
 Website reset/deletion and owner deletion remove both verified tables. Expired
 profiles are hidden immediately and deleted by the maintenance job; their
 session links cascade. Disabling the profile flag stops new resolution and

@@ -11,6 +11,14 @@ import {
   isServerEventName,
   verifyServerEventSignature,
 } from '@/lib/server-events';
+import {
+  isTruleafIdentityProfileEnabled,
+  isTruleafModerationEnabled,
+  isTruleafWebsite,
+} from '@/lib/truleaf/config';
+import { scheduleTruleafIdentityProofStorage } from '@/lib/truleaf/identity-proof';
+import { requestTruleafIdentityProfiles } from '@/lib/truleaf/service';
+import { recordTruleafSessionIdentityProof, recordVerifiedSessionIdentity } from '@/queries/prisma';
 import { createSession, saveEvent } from '@/queries/sql';
 
 const MAX_BODY_BYTES = 16 * 1024;
@@ -31,6 +39,7 @@ const serverEventSchema = z.object({
     .max(50)
     .regex(/^[a-z0-9][a-z0-9._-]*$/),
   distinctId: z.string().min(1).max(50),
+  identityProof: z.string().min(1).max(4096).optional(),
   occurredAt: z.iso.datetime().optional(),
   urlPath: z.string().startsWith('/').max(500).default('/server'),
   data: z
@@ -41,6 +50,66 @@ const serverEventSchema = z.object({
     .refine(value => Object.keys(value).length <= 20)
     .optional(),
 });
+
+async function persistIdentityProofAndScheduleProfileResolution({
+  websiteId,
+  sessionId,
+  distinctId,
+  identityProof,
+}: {
+  websiteId: string;
+  sessionId: string;
+  distinctId: string;
+  identityProof?: string;
+}) {
+  if (
+    !identityProof ||
+    (!isTruleafModerationEnabled() && !isTruleafIdentityProfileEnabled()) ||
+    !isTruleafWebsite(websiteId)
+  ) {
+    return true;
+  }
+
+  let stored: Awaited<ReturnType<typeof recordTruleafSessionIdentityProof>>;
+  try {
+    // A 200 response must mean the opaque proof is durable. Otherwise the
+    // sender would complete its outbox while no reconciliation retry exists.
+    stored = await recordTruleafSessionIdentityProof(
+      websiteId,
+      sessionId,
+      distinctId,
+      identityProof,
+    );
+  } catch {
+    return false;
+  }
+
+  if (!stored) {
+    return false;
+  }
+
+  if (!isTruleafIdentityProfileEnabled()) {
+    return true;
+  }
+
+  scheduleTruleafIdentityProofStorage(async () => {
+    const { profiles } = await requestTruleafIdentityProfiles([
+      { websiteId, sessionId, distinctId, proof: identityProof },
+    ]);
+    const profile = profiles.find(
+      candidate =>
+        candidate.websiteId === websiteId &&
+        candidate.sessionId === sessionId &&
+        candidate.distinctId === distinctId,
+    );
+
+    if (profile) {
+      await recordVerifiedSessionIdentity(profile);
+    }
+  });
+
+  return true;
+}
 
 function isUniqueConstraint(error: unknown) {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2002';
@@ -81,7 +150,7 @@ export async function POST(request: Request) {
     const parsed = serverEventSchema.safeParse(JSON.parse(rawBody));
     if (!parsed.success) return badRequest();
 
-    const { websiteId, name, distinctId, occurredAt, urlPath, data } = parsed.data;
+    const { websiteId, name, distinctId, identityProof, occurredAt, urlPath, data } = parsed.data;
     if (!key.websiteIds.includes(websiteId)) return forbidden();
     if (!(await fetchWebsite(websiteId))) return badRequest({ message: 'Website not found' });
     if (!isServerEventName(name)) {
@@ -92,7 +161,10 @@ export async function POST(request: Request) {
     }
 
     const createdAt = occurredAt ? new Date(occurredAt) : new Date();
-    const sessionId = uuid(websiteId, distinctId);
+    // Keep trusted product facts separate from the browser identity session.
+    // Browser identify uses uuid(websiteId, distinctId); sharing that key made
+    // whichever source arrived first permanently define the row's metadata.
+    const sessionId = uuid(websiteId, 'server', distinctId);
     const eventId = uuid('server-event', websiteId, keyId, idempotencyKey);
     const visitId = uuid(sessionId, 'server-event', idempotencyKey);
     let duplicate = false;
@@ -125,7 +197,21 @@ export async function POST(request: Request) {
       ) {
         return badRequest({ message: 'Idempotency key was already used for another fact' });
       }
-      if (existing.projectedAt) return json({ ok: true, duplicate: true, projected: true });
+      if (existing.projectedAt) {
+        const identityStored = await persistIdentityProofAndScheduleProfileResolution({
+          websiteId,
+          sessionId,
+          distinctId,
+          identityProof,
+        });
+        if (!identityStored) {
+          return Response.json(
+            { ok: true, duplicate: true, projected: true, identityStored: false },
+            { status: 202 },
+          );
+        }
+        return json({ ok: true, duplicate: true, projected: true });
+      }
     }
 
     await createSession({
@@ -137,6 +223,18 @@ export async function POST(request: Request) {
       distinctId,
       createdAt,
     });
+    const identityStored = await persistIdentityProofAndScheduleProfileResolution({
+      websiteId,
+      sessionId,
+      distinctId,
+      identityProof,
+    });
+    if (!identityStored) {
+      return Response.json(
+        { ok: true, duplicate, projected: false, identityStored: false },
+        { status: 202 },
+      );
+    }
 
     try {
       await saveEvent({

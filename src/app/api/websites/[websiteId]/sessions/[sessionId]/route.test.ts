@@ -25,7 +25,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(canViewWebsiteSection).mockResolvedValue(true);
   vi.mocked(canViewAuthenticatedWebsite).mockResolvedValue(false);
-  vi.mocked(getWebsiteSession).mockResolvedValue({ id: sessionId } as never);
+  vi.mocked(getVerifiedSessionIdentityProfiles).mockResolvedValue(new Map());
+  vi.mocked(getWebsiteSession).mockResolvedValue({
+    id: sessionId,
+    distinctId: 'private-account-id',
+  } as never);
 });
 
 test('does not expose a verified identity in shared session detail', async () => {
@@ -34,7 +38,23 @@ test('does not expose a verified identity in shared session detail', async () =>
   } as never);
 
   const response = await GET(new Request('http://localhost/api/session'), context);
+  const body = await response.json();
 
-  await expect(response.json()).resolves.toEqual({ id: sessionId });
+  expect(body).toEqual({ id: sessionId });
+  expect(body).not.toHaveProperty('distinctId');
   expect(getVerifiedSessionIdentityProfiles).not.toHaveBeenCalled();
+});
+
+test('keeps the distinct ID available to an authenticated website operator', async () => {
+  vi.mocked(parseRequest).mockResolvedValue({
+    auth: { user: { id: 'operator' } },
+  } as never);
+  vi.mocked(canViewAuthenticatedWebsite).mockResolvedValue(true);
+
+  const response = await GET(new Request('http://localhost/api/session'), context);
+
+  await expect(response.json()).resolves.toMatchObject({
+    id: sessionId,
+    distinctId: 'private-account-id',
+  });
 });

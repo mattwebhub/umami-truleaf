@@ -1,6 +1,7 @@
 import { getQueryFilters, parseRequest } from '@/lib/request';
 import { json, unauthorized } from '@/lib/response';
 import { filterParams, pagingParams, searchParams, withDateRange } from '@/lib/schema';
+import { isTrustedServerSession } from '@/lib/server-events';
 import { isTruleafIdentityProfileEnabled, isTruleafWebsite } from '@/lib/truleaf/config';
 import { canViewAuthenticatedWebsite, canViewWebsiteSection } from '@/permissions';
 import { getVerifiedSessionIdentityProfiles } from '@/queries/prisma';
@@ -44,9 +45,19 @@ export async function GET(
 
   return json({
     ...data,
-    data: data.data.map(session => ({
-      ...session,
-      identityProfile: profiles.get(session.id),
-    })),
+    data: data.data.map(session => {
+      const { distinctId, ...visibleSession } = session;
+      const serverSession = isTrustedServerSession({
+        websiteId,
+        sessionId: session.id,
+        distinctId,
+      });
+
+      return {
+        ...visibleSession,
+        ...(serverSession ? { serverSession: true } : {}),
+        identityProfile: profiles.get(session.id),
+      };
+    }),
   });
 }

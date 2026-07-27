@@ -1,4 +1,5 @@
 import { beforeEach, expect, test, vi } from 'vitest';
+import { uuid } from '@/lib/crypto';
 import { getQueryFilters, parseRequest } from '@/lib/request';
 import { canViewAuthenticatedWebsite, canViewWebsiteSection } from '@/permissions';
 import { getVerifiedSessionIdentityProfiles } from '@/queries/prisma';
@@ -27,7 +28,7 @@ beforeEach(() => {
   vi.mocked(canViewWebsiteSection).mockResolvedValue(true);
   vi.mocked(canViewAuthenticatedWebsite).mockResolvedValue(false);
   vi.mocked(getWebsiteSessions).mockResolvedValue({
-    data: [{ id: sessionId }],
+    data: [{ id: sessionId, distinctId: 'private-account-id' }],
     count: 1,
     page: 1,
     pageSize: 20,
@@ -45,6 +46,7 @@ test('does not enrich a shared sessions response with verified account data', as
 
   expect(response.status).toBe(200);
   expect(body.data[0]).toEqual({ id: sessionId });
+  expect(body.data[0]).not.toHaveProperty('distinctId');
   expect(getVerifiedSessionIdentityProfiles).not.toHaveBeenCalled();
 });
 
@@ -74,4 +76,29 @@ test('enriches the current page for an authenticated website viewer', async () =
   await expect(response.json()).resolves.toMatchObject({
     data: [{ id: sessionId, identityProfile: { username: 'matheus' } }],
   });
+});
+
+test('marks only the trusted server namespace, not spoofed server dimensions', async () => {
+  const distinctId = '507f1f77bcf86cd799439011';
+  const trustedId = uuid(websiteId, 'server', distinctId);
+  const spoofedId = uuid(websiteId, distinctId);
+  vi.mocked(parseRequest).mockResolvedValue({
+    auth: { user: { id: 'operator' } },
+    query: { startAt: 0, endAt: Date.now() },
+  } as never);
+  vi.mocked(getWebsiteSessions).mockResolvedValue({
+    data: [
+      { id: trustedId, distinctId, browser: 'server', os: 'server', device: 'server' },
+      { id: spoofedId, distinctId, browser: 'server', os: 'server', device: 'server' },
+    ],
+    count: 2,
+    page: 1,
+    pageSize: 20,
+  } as never);
+
+  const response = await GET(new Request('http://localhost/api/sessions'), context);
+  const body = await response.json();
+
+  expect(body.data[0]).toMatchObject({ id: trustedId, serverSession: true });
+  expect(body.data[1]).not.toHaveProperty('serverSession');
 });

@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test';
+import { uuid } from '../../src/lib/crypto';
 import { hashPassword } from '../../src/lib/password';
 import prisma from '../../src/lib/prisma';
+import { backfillLegacyServerSessions } from '../../src/lib/server-events-backfill';
 import { loginPage } from './helpers';
 
 const truleafWebsiteId = 'e79ef216-70ab-48df-addc-596b6e9e65a8';
@@ -9,6 +11,11 @@ const sessionId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const eventId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const anonymousSessionId = '12121212-1212-4212-8212-121212121212';
 const anonymousEventId = '34343434-3434-4434-8434-343434343434';
+const serverDistinctId = '507f191e810c19729de860ea';
+const legacyServerSessionId = uuid(truleafWebsiteId, serverDistinctId);
+const serverSessionId = uuid(truleafWebsiteId, 'server', serverDistinctId);
+const serverEventId = '89898989-8989-4989-8989-898989898989';
+const legacyBrowserEventId = '78787878-7878-4787-8787-787878787878';
 const profileId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
 const linkId = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
 const distinctId = '507f1f77bcf86cd799439011';
@@ -97,6 +104,78 @@ test.describe('Truleaf verified identity and scoped branding', () => {
       },
       update: { createdAt },
     });
+    await prisma.client.session.upsert({
+      where: { id: legacyServerSessionId },
+      create: {
+        id: legacyServerSessionId,
+        websiteId: truleafWebsiteId,
+        distinctId: serverDistinctId,
+        browser: 'server',
+        os: 'server',
+        device: 'server',
+        createdAt: new Date(createdAt.getTime() + 120_000),
+      },
+      update: { websiteId: truleafWebsiteId, createdAt },
+    });
+    await prisma.client.websiteEvent.upsert({
+      where: { id: legacyBrowserEventId },
+      create: {
+        id: legacyBrowserEventId,
+        websiteId: truleafWebsiteId,
+        sessionId: legacyServerSessionId,
+        visitId: '67676767-6767-4676-8676-676767676767',
+        hostname: 'truleaf.org',
+        urlPath: '/dashboard',
+        eventType: 1,
+        createdAt: new Date(createdAt.getTime() + 110_000),
+      },
+      update: { createdAt },
+    });
+    await prisma.client.websiteEvent.upsert({
+      where: { id: serverEventId },
+      create: {
+        id: serverEventId,
+        websiteId: truleafWebsiteId,
+        sessionId: legacyServerSessionId,
+        visitId: '90909090-9090-4090-8090-909090909090',
+        hostname: 'server',
+        urlPath: '/server/project',
+        eventName: 'server.project-created',
+        eventType: 2,
+        createdAt: new Date(createdAt.getTime() + 120_000),
+      },
+      update: { createdAt },
+    });
+    await prisma.client.serverEventFact.upsert({
+      where: { id: serverEventId },
+      create: {
+        id: serverEventId,
+        websiteId: truleafWebsiteId,
+        keyId: 'e2e-backend',
+        idempotencyKey: 'e2e:project-created',
+        eventName: 'server.project-created',
+        distinctId: serverDistinctId,
+        urlPath: '/server/project',
+        occurredAt: new Date(createdAt.getTime() + 120_000),
+        projectedAt: new Date(createdAt.getTime() + 120_000),
+      },
+      update: {
+        projectedAt: new Date(createdAt.getTime() + 120_000),
+      },
+    });
+    await expect(backfillLegacyServerSessions({ apply: true })).resolves.toEqual(
+      expect.objectContaining({
+        identitiesMigrated: 1,
+        eventsMoved: 1,
+        legacySessionsSanitized: 1,
+      }),
+    );
+    await expect(
+      prisma.client.websiteEvent.findUnique({
+        where: { id: serverEventId },
+        select: { sessionId: true },
+      }),
+    ).resolves.toEqual({ sessionId: serverSessionId });
     await prisma.client.verifiedIdentityProfile.upsert({
       where: {
         websiteId_distinctId: {
@@ -148,6 +227,9 @@ test.describe('Truleaf verified identity and scoped branding', () => {
     await prisma.client.websiteEvent.deleteMany({
       where: { websiteId: { in: [truleafWebsiteId, standardWebsiteId] } },
     });
+    await prisma.client.serverEventFact.deleteMany({
+      where: { websiteId: { in: [truleafWebsiteId, standardWebsiteId] } },
+    });
     await prisma.client.session.deleteMany({
       where: { websiteId: { in: [truleafWebsiteId, standardWebsiteId] } },
     });
@@ -180,6 +262,8 @@ test.describe('Truleaf verified identity and scoped branding', () => {
     await expect(page.getByText('Matheus Paranhos').first()).toBeVisible();
     await expect(page.getByAltText('Matheus Paranhos')).toBeVisible();
     await expect(page.getByText('Unknown', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('Truleaf backend').first()).toBeVisible();
+    await expect(page.getByText('Server-side event').first()).toBeVisible();
     await expect(page.getByText('umami', { exact: true })).toHaveCount(0);
 
     await page.getByText('Matheus Paranhos').first().click();

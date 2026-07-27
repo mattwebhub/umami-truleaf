@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
+import { uuid } from '@/lib/crypto';
 
 export const SERVER_EVENT_PREFIX = 'server.';
 
@@ -11,6 +12,23 @@ export const SERVER_EVENT_PREFIX = 'server.';
  */
 export function isServerEventName(name: string) {
   return name.startsWith(SERVER_EVENT_PREFIX);
+}
+
+/**
+ * Server provenance is encoded in an unforgeable session namespace, not in
+ * caller-controlled browser dimensions. Public collection derives
+ * uuid(websiteId, distinctId), while only trusted ingestion derives this form.
+ */
+export function isTrustedServerSession({
+  websiteId,
+  sessionId,
+  distinctId,
+}: {
+  websiteId: string;
+  sessionId: string;
+  distinctId?: string | null;
+}) {
+  return Boolean(distinctId && sessionId === uuid(websiteId, 'server', distinctId));
 }
 
 const keySchema = z.record(

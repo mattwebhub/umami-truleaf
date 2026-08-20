@@ -27,6 +27,7 @@ import { SessionInfo } from './SessionInfo';
 import { SessionReplaysDataTable } from './SessionReplaysDataTable';
 import { SessionReviewControl } from './SessionReviewControl';
 import { SessionStats } from './SessionStats';
+import { TruleafChatButton } from './TruleafChatButton';
 import { TruleafModerationPanel } from './TruleafModerationPanel';
 
 export function SessionProfile({
@@ -99,6 +100,12 @@ export function SessionProfile({
             </Row>
             <SessionStats data={data} />
             <SessionInfo data={data} />
+            <Row justifyContent="flex-end">
+              <TruleafChatButton
+                distinctId={data.distinctId}
+                hasVerifiedAccount={Boolean(data.identityProfile)}
+              />
+            </Row>
             {reviewsEnabled && (
               <Row justifyContent="flex-end">
                 <SessionReviewControl websiteId={websiteId} sessionId={sessionId} />

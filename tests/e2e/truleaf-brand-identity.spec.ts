@@ -270,6 +270,7 @@ test.describe('Truleaf verified identity and scoped branding', () => {
     await page.getByText('Matheus Paranhos').first().click();
     await expect(page.getByText('@matheus · user · premium')).toBeVisible();
     await expect(page.getByText('Session', { exact: true }).last()).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Chat in Truleaf' })).toBeVisible();
 
     await page.evaluate(() => {
       document.documentElement.classList.remove('dark');

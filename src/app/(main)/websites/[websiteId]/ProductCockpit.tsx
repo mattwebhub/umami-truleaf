@@ -175,7 +175,7 @@ export function ProductCockpit({
                 detail={change(query.data.overview.visitors, query.data.overview.previousVisitors)}
               />
               <MetricValue
-                label="Active identified accounts"
+                label="Active verified accounts"
                 value={formatCount(query.data.overview.activeAccounts)}
                 detail={change(
                   query.data.overview.activeAccounts,

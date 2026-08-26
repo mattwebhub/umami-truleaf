@@ -3,6 +3,7 @@ import { uuid } from '../../src/lib/crypto';
 import { hashPassword } from '../../src/lib/password';
 import prisma from '../../src/lib/prisma';
 import { backfillLegacyServerSessions } from '../../src/lib/server-events-backfill';
+import { getIdentifiedAccountCount } from '../../src/queries/sql/product/getIdentifiedAccountCount';
 import { loginPage } from './helpers';
 
 const truleafWebsiteId = 'e79ef216-70ab-48df-addc-596b6e9e65a8';
@@ -11,6 +12,7 @@ const sessionId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const eventId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const anonymousSessionId = '12121212-1212-4212-8212-121212121212';
 const anonymousEventId = '34343434-3434-4434-8434-343434343434';
+const anonymousChatVisitorId = '45454545-4545-4454-8454-454545454545';
 const serverDistinctId = '507f191e810c19729de860ea';
 const legacyServerSessionId = uuid(truleafWebsiteId, serverDistinctId);
 const serverSessionId = uuid(truleafWebsiteId, 'server', serverDistinctId);
@@ -81,6 +83,7 @@ test.describe('Truleaf verified identity and scoped branding', () => {
       create: {
         id: anonymousSessionId,
         websiteId: truleafWebsiteId,
+        distinctId: anonymousChatVisitorId,
         browser: 'Firefox',
         os: 'Linux',
         device: 'desktop',
@@ -88,7 +91,7 @@ test.describe('Truleaf verified identity and scoped branding', () => {
         city: 'Porto',
         createdAt: new Date(createdAt.getTime() + 60_000),
       },
-      update: { websiteId: truleafWebsiteId, distinctId: null, createdAt },
+      update: { websiteId: truleafWebsiteId, distinctId: anonymousChatVisitorId, createdAt },
     });
     await prisma.client.websiteEvent.upsert({
       where: { id: anonymousEventId },
@@ -237,6 +240,15 @@ test.describe('Truleaf verified identity and scoped branding', () => {
       where: { id: { in: [truleafWebsiteId, standardWebsiteId] } },
     });
     await prisma.client.$disconnect();
+  });
+
+  test('counts only proof-backed accounts as active', async () => {
+    await expect(
+      getIdentifiedAccountCount(truleafWebsiteId, {
+        startDate: new Date(Date.now() - 3 * 60 * 60_000),
+        endDate: new Date(Date.now() + 60 * 60_000),
+      }),
+    ).resolves.toBe(1);
   });
 
   test('shows a verified account, brands only Truleaf, and resets on navigation', async ({

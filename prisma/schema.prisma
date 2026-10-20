@@ -89,12 +89,33 @@ model Website {
   sessionReplays      SessionReplay[]
   sessionReplaysSaved SessionReplaySaved[]
   heatmapEvents       HeatmapEvent[]
+  experimentRollouts  ExperimentRollout[]
 
   @@index([userId])
   @@index([teamId])
   @@index([createdAt])
   @@index([createdBy])
   @@map("website")
+}
+
+/// Website-scoped A/B allocation. Public readers receive only the key, percent,
+/// and revision; names and operator IDs remain inside authenticated Umami APIs.
+model ExperimentRollout {
+  id               String   @id() @map("experiment_rollout_id") @db.Uuid
+  websiteId        String   @map("website_id") @db.Uuid
+  key              String   @db.VarChar(80)
+  name             String   @db.VarChar(120)
+  treatmentPercent Int      @map("treatment_percent") @db.SmallInt
+  revision         String   @db.Uuid
+  updatedByUserId  String   @map("updated_by_user_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  website Website @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+
+  @@unique([websiteId, key])
+  @@index([websiteId, updatedAt])
+  @@map("experiment_rollout")
 }
 
 /// Revocable, website-scoped credential for machine-to-machine analytics access.

@@ -173,3 +173,39 @@ Recommended deployment order:
 
 An older image ignores the additive tables, but rollback must still be tested
 against a restored production-shaped database before release.
+
+## A/B rollout controls
+
+Website editors can open **Websites → [website] → Product Health → A/B rollouts**
+to create an experiment or change its treatment percentage from 0 to 100.
+The key is immutable after creation; a revision check prevents two editors from
+silently replacing each other's changes. Website viewers and share links cannot
+read or change the operator controls. The first Product Health visit creates an
+`insight-signup-v1` row at 50%, unless an editor has already saved one.
+
+Set `EXPERIMENT_ROLLOUT_WEBSITE_ID` to the UUID of the Truleaf website in Umami.
+The unauthenticated `GET /api/experiments/rollouts` then returns only that
+website's allocation inputs, for example:
+
+```json
+{
+  "experiments": {
+    "insight-signup-v1": {
+      "treatmentPercent": 50,
+      "revision": "initial-50"
+    }
+  }
+}
+```
+
+Before the first board visit, the endpoint includes a virtual 50% starter entry;
+its first authenticated edit persists the row. No public GET writes to the
+database. The response exposes no website, operator, visitor or event data. It
+uses a 60-second shared-cache lifetime; malformed or absent configuration
+returns 503 with `no-store`. The consuming site should treat an unavailable
+feed as 0% treatment and should keep assignment stable for each experiment key.
+
+Deploy migration `28_add_experiment_rollout` before enabling the site proxy.
+Then set `EXPERIMENT_ROLLOUT_WEBSITE_ID`, open Product Health once, and confirm
+the public feed includes the starter allocation. Do not place this server-only
+variable in the browser environment.

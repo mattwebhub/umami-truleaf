@@ -6,6 +6,7 @@ import { LoadingPanel } from '@/components/common/LoadingPanel';
 import { Panel } from '@/components/common/Panel';
 import { useApi, useDateParameters, useFilterParameters, useWebsite } from '@/components/hooks';
 import type { ProductCockpitConfig } from '@/lib/product-cockpit/config';
+import { ExperimentRollouts } from './ExperimentRollouts';
 import { ProductBarChart } from './ProductBarChart';
 
 type Metric = {
@@ -158,6 +159,8 @@ export function ProductCockpit({
           </Button>
         )}
       </Row>
+
+      {website.canUpdate && <ExperimentRollouts websiteId={websiteId} />}
 
       <LoadingPanel
         data={query.data}

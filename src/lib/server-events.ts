@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
-import { uuid } from '@/lib/crypto';
+import { uuid } from './crypto';
 
 export const SERVER_EVENT_PREFIX = 'server.';
 

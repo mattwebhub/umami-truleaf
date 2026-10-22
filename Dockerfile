@@ -34,6 +34,10 @@ RUN npm run build-docker
 FROM node:${NODE_IMAGE_VERSION} AS runner
 WORKDIR /app
 
+# eMudhra/emSign CA key compromise (Oct 2026): Node 22 rejects the revoked intermediates from 22.23.4 on.
+# Fail the build on an older cached base image instead of shipping a runtime that trusts them.
+RUN node -e "const [a,b,c]=process.versions.node.split('.').map(Number);if(a<22||(a===22&&(b<23||(b===23&&c<4)))){console.error('node '+process.version+' < 22.23.4 (eMudhra CA fix)');process.exit(1)}"
+
 ARG NODE_OPTIONS
 ARG PNPM_VERSION
 ARG PRISMA_VERSION
